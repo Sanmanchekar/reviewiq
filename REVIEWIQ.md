@@ -1,206 +1,196 @@
 # ReviewIQ — Global PR Review Agent
 
-When the user asks to "review this PR", "review PR", "review-pr", or provides a GitHub PR link, activate ReviewIQ.
+When the user asks to "review this PR", "review PR", "review code", "review-full", "review-pr", "check review", or any review-related request, activate ReviewIQ.
 
 ## Input Detection
 
 | User input | Action |
 |------------|--------|
-| `review-pr https://github.com/owner/repo/pull/42` | Fetch PR from GitHub API |
-| `review this PR` (on a feature branch) | Diff current branch against base |
-| `review this PR to develop` | Diff current branch against develop |
-| PR link pasted: `https://github.com/...` | Auto-detect as PR review request |
+| `review-full <PR-link>` / `review-full <number>` | Full review, all files at once, auto-post inline comments + suggestions to PR |
+| `review-pr <PR-link>` / `review-pr <number>` | File-by-file interactive review, post per file |
+| `review this PR` / `review this PR to develop` | Review current branch diff (no PR link needed) |
+| Any GitHub PR link pasted | Auto-detect as PR review request |
 
-### PR Link Parsing
+### PR Link Handling
 
-Extract from URL: `https://github.com/{owner}/{repo}/pull/{number}`
-Use `gh` CLI or GitHub API to fetch PR data.
+When a GitHub PR link is provided (`https://github.com/owner/repo/pull/42`):
+1. Parse owner, repo, PR number from URL
+2. Fetch PR metadata and changed files via `gh pr view <number> --json files,title,author,baseRefName,headRefName`
+3. Get diff via `gh pr diff <number>`
 
-### Branch Detection (when no PR link)
+### Full Review Mode (review-full)
 
-1. **FROM**: `git rev-parse --abbrev-ref HEAD`
-2. **TO**: user-specified, or `git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`, fallback `main`
-3. If FROM equals TO: "You're on the base branch. Checkout your feature branch first."
+Reviews ALL files at once with cross-file analysis, then auto-posts:
+1. Fetch all diffs and file contents
+2. Load ALL relevant skills across all files
+3. Run 4-stage review with cross-file analysis
+4. Post inline comments with ```suggestion blocks on each finding line
+5. Post summary comment with finding table and assessment
+6. Save state
 
-## Core Flow: File-by-File Review
+### File-by-File Mode (review-pr)
 
-**This is the key design**: review one file at a time, load only that file's relevant skills, post inline on the PR. Minimizes tokens per iteration.
+Reviews one file at a time for deeper analysis:
+1. Show file list, then for each file:
+   - Show diff
+   - Load only that file's relevant skills
+   - Review single file
+   - Post inline comments for that file
+   - Ask user: next / explain N / fix N / skip
+2. After all files, post summary
+3. Save state
 
-```
-PR Link / Branch
-      │
-      ▼
-Fetch changed files list
-      │
-      ▼
-┌─── For each file ──────────────────────────────┐
-│                                                  │
-│  1. Show file diff to user                       │
-│  2. Detect skills for THIS file only             │
-│     (.py → python + check imports for framework) │
-│  3. Load only relevant skill sections            │
-│  4. Review this single file against skills       │
-│  5. Post findings as inline PR comments          │
-│     with ```suggestion blocks for fixes          │
-│  6. Ask: implement suggestion? / next file?      │
-│  7. If implement → apply fix, commit, push       │
-│                                                  │
-└─── Next file ──────────────────────────────────┘
-      │
-      ▼
-Post summary comment on PR
-Save state
-```
+## Branch Detection (when no PR link)
 
-### Step 1: Fetch PR Files
+1. **FROM branch** (head): Current checked-out branch via `git rev-parse --abbrev-ref HEAD`
+2. **TO branch** (base/target):
+   - If user specifies: use that (e.g., "review this PR to develop")
+   - If not specified: auto-detect via `git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`
+   - Fallback: `main`, then `master`
 
-```bash
-# Via gh CLI (preferred)
-gh pr view <number> --json files,title,author,baseRefName,headRefName
-gh pr diff <number>
+3. If FROM branch equals TO branch, tell the user:
+   "You're on the base branch. Checkout your feature branch first:
+    git checkout feature/your-branch"
 
-# Or via API
-# GET /repos/{owner}/{repo}/pulls/{number}/files
-```
-
-Get the list of changed files. Show to user:
-```
-PR #42: "Add payment retry logic" by @developer
-Branch: feature/payment-retry → main
-Changed files (4):
-  1. src/webhooks/retry.py        (+45, -12)
-  2. src/webhooks/handler.py      (+8, -3)
-  3. src/config/settings.py       (+2, -0)
-  4. tests/test_webhooks.py       (+30, -0)
-
-Reviewing file 1/4: src/webhooks/retry.py...
-```
-
-### Step 2: Per-File Skill Loading
-
-For each file, detect and load ONLY relevant skills:
-
-```
-src/webhooks/retry.py
-  → Language: python (from .py extension)
-  → Framework: django (from imports in diff)
-  → Domain: none detected
-  → Always: commandments, security, scalability, stability, maintainability, performance
-  → Skills loaded: ~3K words (vs ~14K for all)
-```
-
-Load skills from:
-1. `.pr-review/skills/` (repo-level, if exists)
-2. `~/.reviewiq/skills/` (global defaults)
-
-### Step 3: Review Single File
-
-Review ONLY this file's diff against the loaded skills. Output findings for this file only.
-
-### Step 4: Post Inline PR Comments
-
-For each finding, post as an **inline comment on the specific line** in the PR:
-
-```bash
-# Via gh CLI
-gh pr comment <number> --body "finding text" 
-
-# For inline comments on specific lines, use the GitHub API:
-# POST /repos/{owner}/{repo}/pulls/{number}/reviews
-```
-
-**Use GitHub suggestion format for fixes:**
-````
-**[CRITICAL] Retry without backoff**
-
-Webhook retries fire immediately on failure. During incident recovery, 
-queued webhooks retry simultaneously → thundering herd.
-
-```suggestion
-time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
-```
-
-This adds exponential backoff with jitter and 30s cap.
-````
-
-This lets the developer click "Apply suggestion" directly in GitHub UI.
-
-### Step 5: User Interaction (per file)
-
-After reviewing a file, ask the user:
-
-```
-File 1/4 reviewed: src/webhooks/retry.py
-  Found: 2 findings (1 CRITICAL, 1 NIT)
-  Posted: 2 inline comments with suggestions
-
-What next?
-  • "next" / "next file" → move to file 2/4
-  • "implement 1" → apply suggestion for finding 1, commit, push
-  • "explain 1" → deep dive into finding 1
-  • "skip" → skip remaining files
-  • "retract 1" → retract finding 1
-```
-
-### Step 6: Implement Suggestion
-
-When user says "implement" or "fix":
-
-```bash
-# Apply the fix to the file
-# Stage and commit
-git add <file>
-git commit -m "fix: <finding title>"
-git push
-```
-
-Or if the suggestion was posted on GitHub, the developer can click "Apply suggestion" in the PR UI.
-
-### Step 7: Summary
-
-After all files reviewed, post a summary comment on the PR:
-
-```
-## ReviewIQ Summary
-
-| File | Findings | Critical | Important | Nit |
-|------|----------|----------|-----------|-----|
-| retry.py | 2 | 1 | 0 | 1 |
-| handler.py | 1 | 0 | 1 | 0 |
-| settings.py | 0 | — | — | — |
-| test_webhooks.py | 1 | 0 | 0 | 1 |
-
-**Total**: 4 findings (1 critical, 1 important, 2 nits)
-**Assessment**: REQUEST CHANGES
-```
-
-## Commands (Natural Language)
+## Commands (respond to natural language)
 
 | User says | Action |
 |-----------|--------|
-| `review-pr <link>` / `review this PR` | Start file-by-file review |
-| `next` / `next file` | Move to next file |
-| `implement N` / `fix N` / `apply N` | Apply suggestion for finding N |
-| `explain N` / `explain finding N` | Deep dive into finding N |
-| `skip` / `skip file` | Skip current file, move to next |
-| `skip all` / `finish` | Skip remaining files, post summary |
-| `retract N` | Retract finding N |
-| `wontfix N` | Mark finding as won't fix |
-| `check` / `re-review` | Re-review after fixes pushed |
-| `status` / `show findings` | Show all findings across all files |
-| `approve` / `final check` | Check for remaining blockers |
-| `summarize` / `PR summary` | Post summary comment on PR |
+| "review-full <PR-link>" / "review-full <number>" | Full review, all files, auto-post to PR |
+| "review-pr <PR-link>" / "review-pr <number>" | File-by-file interactive review |
+| "review this PR" / "review PR" / "review to main" | Full 4-stage review (branch-based) |
+| "review check" / "check review" / "re-review" | Incremental re-review after fixes |
+| "explain finding N" / "explain #N" | Deep dive into finding N |
+| "fix finding N" / "fix #N" | Apply the suggested fix |
+| "review status" / "show findings" | Finding status table |
+| "retract N" / "retract finding N" | Retract (agent was wrong) |
+| "wontfix N" / "won't fix N" | Mark as won't fix |
+| "resolve N" / "mark N resolved" | Mark as resolved |
+| "approve" / "final check" | Check for remaining blockers |
+| "summarize PR" / "PR summary" | Generate merge commit summary |
+| "blast radius" / "impact analysis" | Trace what could break |
+| "generate tests" / "test finding N" | Generate test cases |
 
-## State Management
+## Review Protocol
 
-Save state to `.pr-review/reviews/pr-<N>.json` after each file review (not just at the end). This way if the session is interrupted, progress is preserved.
+### Step 1: Context Assembly
+
+```bash
+HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+BASE_BRANCH=<user-specified or auto-detected>
+
+echo "Reviewing: $HEAD_BRANCH → $BASE_BRANCH"
+git log --oneline $BASE_BRANCH..$HEAD_BRANCH
+git diff $BASE_BRANCH...$HEAD_BRANCH
+git diff --name-only $BASE_BRANCH...$HEAD_BRANCH
+```
+
+Read ALL changed files in full. For key symbols, trace with `git grep -n <symbol>`.
+
+### Step 2: Load Skills
+
+Check for skills in this order (first found wins per skill):
+1. `.pr-review/skills/` (repo-level — team customizations)
+2. `~/.reviewiq/skills/` (global — installed defaults)
+
+**Always load**: `commandments.md`, `security.md`, `scalability.md`, `stability.md`, `maintainability.md`, `performance.md`
+
+**Load by file type** (only matching sections):
+- `.py` → Python from `languages.md`, check for django/fastapi/flask in `frameworks.md`
+- `.ts/.js` → TypeScript from `languages.md`, check for react/nextjs/express/nestjs/vue/angular in `frameworks.md`
+- `.go` → Golang from `languages.md`
+- `.java` → Java from `languages.md`, check for spring in `frameworks.md`
+- `.rs` → Rust, `.cs` → C#, `.rb` → Ruby, `.cpp/.c` → C++, `.php` → PHP, `.sh` → Shell
+- `Dockerfile` / `Chart.yaml` / `*.tf` / CI configs → matching section from `devops.md`
+
+**Load by domain** (if imports/filenames match):
+- payment/stripe/razorpay/loan/emi/insurance/ledger/kyc → `fintech.md`
+- upi/nach/aadhaar/rbi/nbfc/ifsc → `india-regulatory.md`
+- cibil/experian/credit_score/bureau → `credit-bureau.md`
+- fraud/risk_engine/velocity/device_fingerprint → `fraud.md`
+- sms/twilio/sendgrid/whatsapp/fcm/dlt → `notifications.md`
+- saga/outbox/event_sourcing/kafka → `financial-microservices.md`
+- gdpr/ccpa/dpdp/consent/pii/anonymiz → `data-privacy.md`
+
+If no skills directory exists, review using built-in knowledge.
+
+### Step 3: 4-Stage Review
+
+**Stage 1 — Understand**: Read files, map intent, trace system context
+**Stage 2 — Analyze**: Check against skill checklists for anti-patterns
+**Stage 3 — Assess**: Classify each finding:
+  - `[CRITICAL]` — bugs, data loss, security vulnerabilities. Must fix.
+  - `[IMPORTANT]` — poor error handling, race conditions, perf issues. Should fix.
+  - `[NIT]` — style, naming, minor improvements. Won't block.
+  - `[QUESTION]` — looks odd, might be intentional. Needs clarification.
+
+**Stage 4 — Report**: For each finding:
+```
+### Finding <N>: <title>
+**Severity**: [CRITICAL/IMPORTANT/NIT/QUESTION]
+**File**: `path/to/file:line`
+**Status**: open
+
+**Problem**: What's wrong and why it matters.
+**Impact**: What breaks.
+**Suggested fix**:
+<concrete code fix>
+**Why this fix**: Rationale.
+```
+
+End with summary: files changed, finding counts, assessment (APPROVE / REQUEST CHANGES / NEEDS DISCUSSION).
+
+### Step 4: Save State
+
+Create `.pr-review/reviews/` in the repo if it doesn't exist.
+Write findings to `.pr-review/reviews/pr-<N>.json`:
+
+```json
+{
+  "version": 2,
+  "pr": { "number": 0, "repo": "", "title": "", "author": "", "base_branch": "", "head_branch": "" },
+  "review_rounds": [{ "round": 1, "timestamp": "ISO8601", "head_sha": "", "base_sha": "", "event": "review", "files_reviewed": [] }],
+  "findings": {
+    "1": {
+      "id": 1, "title": "", "severity": "", "status": "open",
+      "file": "", "line": 0, "problem": "", "impact": "",
+      "suggested_fix": "", "fix_rationale": "",
+      "created_round": 1, "created_at": "", "updated_at": "",
+      "status_history": [{ "status": "open", "round": 1, "timestamp": "" }],
+      "discussion": []
+    }
+  },
+  "conversation": [],
+  "summary": { "total_findings": 0, "open": 0, "resolved": 0, "wontfix": 0, "retracted": 0, "assessment": "PENDING", "last_reviewed_sha": "" }
+}
+```
+
+## Finding Lifecycle
+
+```
+open → resolved         (developer fixed it)
+     → partially_fixed  (partially addressed)
+     → wontfix          (developer won't fix, reasoning accepted)
+     → retracted        (agent was wrong)
+```
+
+Every transition: update status, append to status_history with timestamp + note, recompute summary.
+
+## Incremental Re-review (check)
+
+1. Load state — know what SHA was last reviewed
+2. Diff only changes since last review
+3. For each existing finding: RESOLVED / PARTIALLY FIXED / UNRESOLVED
+4. Check for NEW issues from the fixes
+5. Update state, output status table
 
 ## Rules
 
-1. **One file at a time** — never load all files into context simultaneously
-2. **Minimal skills per file** — only load skills matching this file's type and imports
-3. **Inline comments** — post findings on the specific PR lines, not as a wall of text
-4. **Suggestion blocks** — every fix must use GitHub's ```suggestion format for one-click apply
-5. **Ask before moving on** — let the user implement/explain/retract before going to next file
-6. **Never hallucinate** — always read the file, always verify line numbers
-7. **Concrete fixes only** — copy-pasteable code in suggestion blocks
+1. Never hallucinate file contents — always read the file
+2. Concrete fixes only — copy-pasteable code, not "consider using..."
+3. Match repo conventions
+4. Engage with pushback — developer knows the codebase
+5. Severity honesty — don't inflate or downplay
+6. No style bikeshedding — focus on logic, correctness, design
+7. Cross-file awareness — check if changes break assumptions elsewhere
+8. State is truth — always load before acting, save after
