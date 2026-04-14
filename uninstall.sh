@@ -9,6 +9,8 @@
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.local/bin"
+SKILLS_DIR="$HOME/.reviewiq"
+CLAUDE_DIR="$HOME/.claude"
 BINARY="reviewiq"
 
 RED='\033[0;31m'
@@ -29,49 +31,54 @@ main() {
 
     local found=false
 
-    # Remove binary from ~/.local/bin
-    for f in "$INSTALL_DIR/$BINARY" "$INSTALL_DIR/riq"; do
-        if [[ -f "$f" ]] || [[ -L "$f" ]]; then
-            rm -f "$f"
-            info "Removed $f"
-            found=true
-        fi
-    done
-
-    # Remove binary from /usr/local/bin (if installed there)
-    for f in "/usr/local/bin/$BINARY" "/usr/local/bin/riq"; do
-        if [[ -f "$f" ]] || [[ -L "$f" ]]; then
-            if [[ -w "$f" ]]; then
-                rm -f "$f"
-            else
-                sudo rm -f "$f"
+    # 1. Remove binaries
+    for dir in "$INSTALL_DIR" "/usr/local/bin" "${GOPATH:-$HOME/go}/bin"; do
+        for f in "$dir/$BINARY" "$dir/riq"; do
+            if [[ -f "$f" ]] || [[ -L "$f" ]]; then
+                if [[ -w "$f" ]] || [[ -w "$(dirname "$f")" ]]; then
+                    rm -f "$f"
+                else
+                    sudo rm -f "$f"
+                fi
+                info "Removed $f"
+                found=true
             fi
-            info "Removed $f"
-            found=true
-        fi
+        done
     done
 
-    # Remove from go/bin (if installed via go install)
-    local gobin="${GOPATH:-$HOME/go}/bin"
-    for f in "$gobin/$BINARY" "$gobin/riq"; do
-        if [[ -f "$f" ]] || [[ -L "$f" ]]; then
-            rm -f "$f"
-            info "Removed $f"
-            found=true
-        fi
-    done
+    # 2. Remove global skills
+    if [[ -d "$SKILLS_DIR" ]]; then
+        rm -rf "$SKILLS_DIR"
+        info "Removed $SKILLS_DIR/"
+        found=true
+    fi
 
-    # Remove old Python version if present
+    # 3. Remove Claude Code config
+    if [[ -f "$CLAUDE_DIR/REVIEWIQ.md" ]]; then
+        rm -f "$CLAUDE_DIR/REVIEWIQ.md"
+        info "Removed $CLAUDE_DIR/REVIEWIQ.md"
+        found=true
+    fi
+
+    # Remove @REVIEWIQ.md reference from CLAUDE.md
+    if [[ -f "$CLAUDE_DIR/CLAUDE.md" ]]; then
+        if grep -q "@REVIEWIQ.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null; then
+            sed -i.bak '/@REVIEWIQ.md/d' "$CLAUDE_DIR/CLAUDE.md"
+            rm -f "$CLAUDE_DIR/CLAUDE.md.bak"
+            info "Removed @REVIEWIQ.md from $CLAUDE_DIR/CLAUDE.md"
+        fi
+    fi
+
+    # 4. Remove old Python package
     if pip show reviewiq &>/dev/null 2>&1; then
         pip uninstall reviewiq -y 2>/dev/null || true
         info "Removed Python package"
         found=true
     fi
 
-    # Clean PATH entry from shell rc files
+    # 5. Clean PATH entries from shell rc files
     for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
         if [[ -f "$rc" ]] && grep -q "# ReviewIQ" "$rc" 2>/dev/null; then
-            # Remove the ReviewIQ block (comment + export line)
             sed -i.bak '/# ReviewIQ/d' "$rc"
             sed -i.bak "\|$INSTALL_DIR|d" "$rc"
             rm -f "${rc}.bak"
@@ -83,10 +90,15 @@ main() {
         echo ""
         echo -e "${GREEN}${BOLD}ReviewIQ uninstalled.${NC}"
         echo ""
-        echo -e "Note: .pr-review/ and .claude/commands/review-*.md in your repos"
-        echo -e "were NOT removed (they're part of the repo, not the install)."
-        echo -e "Delete them manually if you want:"
-        echo -e "  rm -rf .pr-review/ .claude/commands/review-*.md"
+        echo -e "Removed:"
+        echo -e "  - Binary (reviewiq, riq)"
+        echo -e "  - Global skills (~/.reviewiq/)"
+        echo -e "  - Claude Code config (~/.claude/REVIEWIQ.md)"
+        echo -e "  - PATH entries"
+        echo ""
+        echo -e "NOT removed (repo-level files, delete manually if needed):"
+        echo -e "  - .pr-review/ in your repos"
+        echo -e "  - .claude/commands/review-*.md in your repos"
     else
         warn "ReviewIQ not found. Nothing to uninstall."
     fi

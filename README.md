@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**13 slash commands, 16 review skills, 3 surfaces — Claude Code, CLI, and CI — powered by stateful finding tracking.**
+**One install, works everywhere. 16 review skills, natural language commands in Claude Code, CLI + CI support — powered by stateful finding tracking.**
 
 [Quick Start](#quick-start) |
 [Claude Code Commands](#claude-code-commands) |
@@ -31,7 +31,7 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 
 | Surface | How | LLM | API Key? | State |
 |---------|-----|-----|----------|-------|
-| **Claude Code** | 13 `/review-*` slash commands | Claude Code's own | No | Local JSON |
+| **Claude Code** | Natural language: `review this PR` | Claude Code's own | No | Local JSON |
 | **CLI** | `reviewiq review <branch>` | Claude API | Yes | Local JSON |
 | **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
 | **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
@@ -73,19 +73,23 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 
 ### Usage
 
-The installer auto-runs `reviewiq init` if you're inside a git repo — it creates `.pr-review/` (protocol + skills), `.claude/commands/` (13 slash commands), and updates `.gitignore`. For other repos, run `reviewiq init` manually.
+The installer sets up everything globally — binary, skills (`~/.reviewiq/skills/`), and Claude Code config (`~/.claude/REVIEWIQ.md`). Works in every repo immediately. No per-repo init needed.
 
-**Claude Code (slash commands — no API key needed):**
+**Claude Code (just talk naturally — no API key needed):**
 ```bash
-/review-pr feature/webhook-retries          # Full review
-/review-check feature/webhook-retries       # Re-review after fixes
-/review-explain 2                           # Deep dive into finding #2
-/review-fix 1                               # Apply the suggested fix
-/review-status                              # Finding status table
-/review-ask "why is this critical?"         # Follow-up question
-/review-resolve 1 backoff added             # Mark resolved
-/review-retract 3 ORM handles it            # Retract finding
-/review-approve                             # Final check
+cd your-project/
+git checkout feature/webhook-retries
+
+# In Claude Code:
+review this PR                              # auto-detects: current branch → main
+review this PR to develop                   # explicit: current branch → develop
+
+# After review, continue naturally:
+explain finding 2                           # deep dive
+fix finding 1                               # applies the fix
+check review                                # re-review after pushing fixes
+retract 3 ORM handles it                    # retract a finding
+approve                                     # final check
 ```
 
 **CLI (native terminal — requires `ANTHROPIC_API_KEY`):**
@@ -106,67 +110,62 @@ Developer comments @review-agent why? → Agent replies with context
 Developer pushes fix → Agent re-reviews incrementally
 ```
 
+**Per-repo customization** (optional): Run `reviewiq init` to copy skills into your repo for team-specific rules. Repo-level skills at `.pr-review/skills/` override global defaults.
+
 ---
 
 ## Claude Code Commands
 
-13 slash commands that work inside Claude Code. No API key, no binary — Claude Code is the LLM.
+Works globally in Claude Code — just talk naturally. The installer sets up `~/.claude/REVIEWIQ.md` so Claude Code understands review commands in every repo.
 
-The installer scaffolds all commands automatically. For additional repos, run `reviewiq init`.
+### Natural Language Commands
 
-### Review Commands
+| What you say | What happens |
+|-------------|--------------|
+| `review this PR` | Full 4-stage review (auto-detects current branch → main) |
+| `review this PR to develop` | Review current branch against develop |
+| `check review` / `re-review` | Incremental re-review after pushing fixes |
+| `review status` / `show findings` | Finding status table |
+| `explain finding 2` / `explain #2` | Deep dive with code tracing |
+| `fix finding 1` / `fix #1` | Apply the suggested fix directly |
+| `resolve 1 backoff added` | Mark finding as resolved |
+| `retract 3 ORM handles it` | Retract finding (agent was wrong) |
+| `wontfix 2 acceptable risk` | Mark as won't fix |
+| `approve` / `final check` | Check for remaining blockers |
+| `summarize PR` | Generate merge commit summary |
+| `blast radius` / `impact analysis` | Trace what could break |
+| `generate tests` / `test finding 2` | Generate test cases |
 
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `/review-pr <branch>` | Full 4-stage review with skill loading | `/review-pr feature/payment-retry` |
-| `/review-check <branch>` | Incremental re-review after fixes | `/review-check feature/payment-retry` |
-| `/review-status` | Show all findings with current statuses | `/review-status` |
+### Slash Commands (also available)
 
-### Finding Commands
+If you run `reviewiq init` in a repo, 13 `/review-*` slash commands are also created:
 
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `/review-explain <N>` | Deep dive into finding N with code tracing | `/review-explain 2` |
-| `/review-fix <N>` | Apply the suggested fix, verify, mark resolved | `/review-fix 1` |
-| `/review-ask <question>` | Follow-up question about the review | `/review-ask "why is finding 1 critical?"` |
+`/review-pr`, `/review-check`, `/review-explain`, `/review-fix`, `/review-status`, `/review-ask`, `/review-resolve`, `/review-retract`, `/review-wontfix`, `/review-approve`, `/review-summarize`, `/review-impact`, `/review-test`
 
-### Lifecycle Commands
-
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `/review-resolve <N> [note]` | Mark finding as resolved | `/review-resolve 1 backoff added with jitter` |
-| `/review-retract <N> [reason]` | Retract finding (agent was wrong) | `/review-retract 3 ORM handles parameterization` |
-| `/review-wontfix <N> [reason]` | Mark as won't fix (accepted) | `/review-wontfix 2 acceptable risk at our scale` |
-| `/review-approve` | Final check — any blockers remaining? | `/review-approve` |
-
-### Analysis Commands
-
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `/review-impact` | Blast radius analysis | `/review-impact` |
-| `/review-test [N]` | Generate test cases for findings | `/review-test 2` |
-| `/review-summarize` | Generate merge commit summary | `/review-summarize` |
-
-### Typical Flow in Claude Code
+### Typical Flow
 
 ```bash
-/review-pr feature/payment-retry
-# Agent reviews, outputs findings with severity
+# Checkout your feature branch
+git checkout feature/payment-retry
 
-/review-explain 2
-# "The retry logic has no backoff..."
+# In Claude Code:
+review this PR
+# Agent: loads skills, reviews, outputs 4 findings
 
-/review-fix 1
-# Agent applies fix directly to the file
+explain finding 2
+# Agent: traces code, shows concrete scenarios
+
+fix finding 1
+# Agent: applies fix, verifies, marks resolved
 
 # Push fixes, then:
-/review-check feature/payment-retry
-# Agent reports: Finding 1 → resolved, Finding 2 → partial
+check review
+# Agent: Finding 1 → resolved, Finding 2 → partial, 1 new nit
 
-/review-approve
+approve
 # "APPROVE — no remaining blockers. Safe to merge."
 
-/review-summarize
+summarize PR
 # Generates merge commit message
 ```
 
@@ -489,6 +488,21 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 ---
 
 ## File Structure
+
+### Installed Globally (by install.sh)
+
+```
+~/.local/bin/
+  reviewiq                      CLI binary
+  riq                           Shorthand symlink
+~/.reviewiq/
+  agent.md                      Review protocol
+  skills/                       16 skill modules (global defaults)
+~/.claude/
+  REVIEWIQ.md                   Claude Code global config (natural language commands)
+```
+
+### Repository (source code)
 
 ```
 cmd/reviewiq/
