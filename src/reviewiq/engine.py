@@ -15,6 +15,7 @@ import urllib.error
 from pathlib import Path
 
 from reviewiq import state as st
+from reviewiq import skills
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -66,12 +67,23 @@ def call_claude(
 
 # ── System Prompt ────────────────────────────────────────────────────────────
 
-def read_system_prompt() -> str:
-    """Read the agent protocol file."""
+def read_system_prompt(changed_files: list[str] | None = None, file_contents: str = "") -> str:
+    """Read the agent protocol file and append auto-detected skills."""
     agent_file = Path(".pr-review/agent.md")
     if agent_file.exists():
-        return agent_file.read_text()
-    return "You are a PR review agent. Provide thorough, actionable code reviews with concrete fixes."
+        base_prompt = agent_file.read_text()
+    else:
+        base_prompt = "You are a PR review agent. Provide thorough, actionable code reviews with concrete fixes."
+
+    # Auto-detect and load relevant skills
+    if changed_files:
+        detected = skills.detect_skills(changed_files, file_contents)
+        skill_prompt = skills.load_skills(detected)
+        if skill_prompt:
+            log(f"Skills loaded: {', '.join(detected['always'] + detected['languages'] + detected['frameworks'] + detected['devops'])}")
+            base_prompt += "\n\n" + skill_prompt
+
+    return base_prompt
 
 
 STRUCTURED_OUTPUT_INSTRUCTION = """
@@ -229,7 +241,7 @@ This is review round {round_number}. Run the full 'review' command as defined in
     st.add_message(review_state, "system", f"Review round {round_number}.", round_number)
     st.add_message(review_state, "developer", user_content, round_number)
 
-    system_prompt = read_system_prompt() + STRUCTURED_OUTPUT_INSTRUCTION
+    system_prompt = read_system_prompt(changed_files, file_contents) + STRUCTURED_OUTPUT_INSTRUCTION
     messages = st.get_conversation_for_llm(review_state)
 
     log(f"Calling Claude with {len(messages)} message(s), round {round_number}")
@@ -298,7 +310,7 @@ Flag any NEW issues introduced by the fixes."""
     st.add_message(review_state, "system", f"Developer pushed changes. Review round {round_number}.", round_number)
     st.add_message(review_state, "developer", user_content, round_number)
 
-    system_prompt = read_system_prompt() + STRUCTURED_OUTPUT_INSTRUCTION
+    system_prompt = read_system_prompt(changed_files, file_contents) + STRUCTURED_OUTPUT_INSTRUCTION
     messages = st.get_conversation_for_llm(review_state)
 
     log(f"Calling Claude with {len(messages)} message(s), round {round_number}")
@@ -315,6 +327,7 @@ def run_ask(
     question: str,
     file_contents: str,
     finding_id: int | None = None,
+    changed_files: list[str] | None = None,
 ) -> str:
     """Ask a follow-up question. Returns the human-readable response."""
     round_number = len(review_state["review_rounds"])
@@ -358,7 +371,7 @@ If they reference a finding, trace the actual code. If they disagree, engage wit
 
     st.add_message(review_state, "developer", question, round_number, {"event": "question"})
 
-    system_prompt = read_system_prompt() + STRUCTURED_OUTPUT_INSTRUCTION
+    system_prompt = read_system_prompt(changed_files, file_contents) + STRUCTURED_OUTPUT_INSTRUCTION
     messages = st.get_conversation_for_llm(review_state)
 
     log(f"Calling Claude with {len(messages)} message(s)")

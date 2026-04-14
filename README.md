@@ -157,6 +157,61 @@ Review the PR on branch feature/webhook-retries, following .pr-review/agent.md
 
 State survives across workflow runs via hidden PR comments.
 
+## Skills System
+
+ReviewIQ auto-detects languages, frameworks, and infrastructure from the PR's changed files and loads only the relevant domain-specific review knowledge. This means the agent reviews with expert-level checklists without burning tokens on irrelevant domains.
+
+### Always Loaded (every review)
+
+| Skill | What it covers |
+|---|---|
+| **Commandments** | 40 universal laws: correctness, security, reliability, performance, maintainability, data integrity, API design, testing |
+| **Security** | Injection (SQL/XSS/SSRF/command), auth, crypto, data protection, infra security, dependency security, OWASP-aligned |
+| **Scalability** | Database (N+1, indexes, pagination), caching (stampede, invalidation), concurrency, network, compute, architecture |
+| **Stability** | Error handling, resilience patterns (circuit breakers, bulkheads, retries), state management, deployment safety, observability |
+
+### Auto-Detected (loaded when relevant files are found)
+
+| Skill | Triggers on | Covers |
+|---|---|---|
+| **Languages** | `.py`, `.java`, `.go`, `.ts`, `.cpp`, `.rs`, `.cs`, `.rb`, `.php`, `.sh`, `.cob` | Language-specific anti-patterns, performance traps, concurrency pitfalls, type safety |
+| **Frameworks** | imports/files for Django, FastAPI, Flask, Spring, React, Next.js, Express, NestJS, Vue, Angular, Rails, .NET | Framework-specific rules, common mistakes, security configs |
+| **DevOps** | `Dockerfile`, `Chart.yaml`, `*.tf`, `*.yml` (K8s), CI configs | Docker, Kubernetes, Helm, Terraform, CI/CD, Ansible review checklists |
+
+### How It Works
+
+```
+PR changes: src/api.py, src/models.py, Dockerfile
+                    │
+            Skill Detection
+                    │
+    ┌───────────────┼───────────────┐
+    ▼               ▼               ▼
+ Always:         Language:       DevOps:
+ commandments    python          docker
+ security
+ scalability     Framework:
+ stability       django
+                 (detected from imports)
+                    │
+                    ▼
+        Only these skills loaded
+        into system prompt
+        (~3K tokens vs ~15K for all)
+```
+
+### Customization
+
+Skills live in `.pr-review/skills/`. Edit them to add your team's domain rules:
+
+```bash
+# Add a custom rule to the security skill
+echo "- **Custom Auth**: All endpoints must use our AuthMiddleware" >> .pr-review/skills/security.md
+
+# Add an entirely new skill
+echo "# Mobile Review Rules\n..." > .pr-review/skills/mobile.md
+```
+
 ## Finding Severity Levels
 
 - **`[CRITICAL]`** — Bugs, data loss, security vulnerabilities. Must fix.
@@ -186,8 +241,18 @@ src/reviewiq/
   ci.py                     CI mode (GitHub Actions webhook handler)
   templates/
     agent.md                Default agent protocol template
+    skills/                 Default skill modules (copied on init)
+      commandments.md       40 universal review laws
+      security.md           OWASP-aligned security checks
+      scalability.md        Performance and scaling patterns
+      stability.md          Reliability and observability
+      languages.md          Language-specific anti-patterns
+      frameworks.md         Framework-specific rules
+      devops.md             Docker/K8s/Helm/Terraform/CI-CD
+  skills.py                 Skill auto-detection and loading
 .pr-review/
   agent.md                  Review protocol (customize per repo)
+  skills/                   Skill modules (customize per repo)
 .claude/commands/
   review-pr.md              Claude Code slash command
 .github/workflows/

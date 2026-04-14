@@ -47,4 +47,4 @@ riq = "reviewiq.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-reviewiq = ["templates/*.md"]
+reviewiq = ["templates/*.md", "templates/skills/*.md"]

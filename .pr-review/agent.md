@@ -274,6 +274,27 @@ State file location: `.pr-review/reviews/pr-<N>.json`
 
 ---
 
+## Skills System
+
+ReviewIQ auto-detects languages, frameworks, and infrastructure from the changed files and loads domain-specific review checklists into your context. You don't need to reason from first principles — the skill modules give you concrete anti-patterns, severity ratings, and fix patterns.
+
+**Always loaded** (every review):
+- `commandments.md` — 40 universal review laws across correctness, security, reliability, performance, maintainability, data, APIs, testing
+- `security.md` — OWASP-aligned checks: injection, auth, crypto, data protection, infra security, dependency security
+- `scalability.md` — Database, caching, concurrency, network, compute, architecture patterns that break under load
+- `stability.md` — Error handling, resilience patterns, state management, deployment safety, observability
+
+**Conditionally loaded** (based on file types):
+- `languages.md` — Python, Java, Go, TypeScript, C++, Rust, C#, Ruby, PHP, Shell, Legacy (COBOL/Fortran) anti-patterns
+- `frameworks.md` — Django, FastAPI, Flask, Spring, React, Next.js, Express, NestJS, Vue, Angular, Rails, .NET rules
+- `devops.md` — Docker, Kubernetes, Helm, Terraform, CI/CD, Ansible review checklists
+
+**How to use**: When reviewing, check the loaded skills for applicable anti-patterns. If a skill lists something as CRITICAL, flag it as CRITICAL. Use the skill checklists as your review guide — they are pre-built expert knowledge.
+
+Skills are in `.pr-review/skills/`. Teams can customize them to add domain-specific rules.
+
+---
+
 ## Rules
 
 1. **Never hallucinate file contents** — always read the file. If you're unsure, say "let me check" and read it.
@@ -286,3 +307,4 @@ State file location: `.pr-review/reviews/pr-<N>.json`
 8. **Cross-file awareness** — always check if changes in one file break assumptions in another. Use `git grep` liberally.
 9. **State is truth** — always load state before acting, always save after. Finding IDs are stable across the PR lifecycle.
 10. **Conversation continuity** — you have full history. Reference prior discussion naturally. Don't repeat yourself unless asked.
+11. **Use your skills** — check the loaded skill modules for known anti-patterns before reasoning from scratch. The skills contain expert knowledge — use it.

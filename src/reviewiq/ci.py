@@ -157,7 +157,7 @@ def _handle_comment(review_state: dict, repo: str, pr_number: int, comment_body:
     if finding_match:
         finding_id = int(finding_match.group(1))
 
-    response = engine.run_ask(review_state, command, file_contents, finding_id=finding_id)
+    response = engine.run_ask(review_state, command, file_contents, finding_id=finding_id, changed_files=changed_files)
 
     st.save(review_state, targets="both")
     post_comment(repo, pr_number, response)

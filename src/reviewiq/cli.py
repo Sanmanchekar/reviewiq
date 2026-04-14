@@ -71,22 +71,35 @@ def _find_existing_state(pr_number: int | None = None) -> tuple[int, dict] | Non
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 def cmd_init(args: argparse.Namespace) -> None:
-    """Initialize .pr-review/ directory with agent.md template."""
+    """Initialize .pr-review/ directory with agent.md and skills."""
+    import shutil
+
     pr_review_dir = Path(".pr-review")
     agent_file = pr_review_dir / "agent.md"
+    skills_dir = pr_review_dir / "skills"
 
-    if agent_file.exists():
-        print("Already initialized: .pr-review/agent.md exists")
+    if agent_file.exists() and skills_dir.exists():
+        print("Already initialized: .pr-review/agent.md and skills/ exist")
         return
 
     pr_review_dir.mkdir(parents=True, exist_ok=True)
 
     # Write the agent protocol template
-    template_path = Path(__file__).parent / "templates" / "agent.md"
-    if template_path.exists():
-        agent_file.write_text(template_path.read_text())
-    else:
-        agent_file.write_text(_DEFAULT_AGENT_MD)
+    if not agent_file.exists():
+        template_path = Path(__file__).parent / "templates" / "agent.md"
+        if template_path.exists():
+            agent_file.write_text(template_path.read_text())
+        else:
+            agent_file.write_text(_DEFAULT_AGENT_MD)
+
+    # Copy skill files
+    if not skills_dir.exists():
+        pkg_skills = Path(__file__).parent / "templates" / "skills"
+        if pkg_skills.exists():
+            shutil.copytree(pkg_skills, skills_dir)
+        else:
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            print("  (no skill templates found in package, created empty skills/)")
 
     # Add reviews/ to gitignore if not already there
     gitignore = Path(".gitignore")
@@ -99,8 +112,12 @@ def cmd_init(args: argparse.Namespace) -> None:
     else:
         gitignore.write_text(f"# ReviewIQ state files\n{gitignore_line}\n")
 
+    skill_files = list(skills_dir.glob("*.md"))
     print("Initialized ReviewIQ:")
     print("  .pr-review/agent.md    — review protocol (customize this)")
+    print(f"  .pr-review/skills/     — {len(skill_files)} skill modules:")
+    for sf in sorted(skill_files):
+        print(f"    {sf.name}")
     print("  .gitignore             — updated to exclude state files")
     print()
     print("Next: reviewiq review <branch>")
@@ -249,7 +266,7 @@ def cmd_explain(args: argparse.Namespace) -> None:
     file_contents = git.read_files([finding["file"]])
     question = f"explain finding {args.finding_id}"
 
-    response = engine.run_ask(review_state, question, file_contents, finding_id=args.finding_id)
+    response = engine.run_ask(review_state, question, file_contents, finding_id=args.finding_id, changed_files=[finding["file"]])
     st.save(review_state, targets="local")
     print(response)
 
@@ -276,7 +293,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
     changed_files = git.get_changed_files(base, branch)
     file_contents = git.read_files(changed_files)
 
-    response = engine.run_ask(review_state, question, file_contents, finding_id=finding_id)
+    response = engine.run_ask(review_state, question, file_contents, finding_id=finding_id, changed_files=changed_files)
     st.save(review_state, targets="local")
     print(response)
 
