@@ -1,0 +1,2 @@
+# Review state files (persisted in PR comments for CI, local-only for CLI)
+.pr-review/reviews/
