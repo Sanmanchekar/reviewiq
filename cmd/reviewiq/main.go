@@ -98,25 +98,30 @@ func findExistingState(prNumber int) (int, *state.ReviewState) {
 func initCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize .pr-review/ in current repo",
+		Short: "Initialize .pr-review/ and .claude/commands/ in current repo",
 		Run: func(cmd *cobra.Command, args []string) {
-			agentFile := filepath.Join(".pr-review", "agent.md")
-			skillsDir := filepath.Join(".pr-review", "skills")
+			created := 0
 
-			if _, err := os.Stat(agentFile); err == nil {
-				if _, err := os.Stat(skillsDir); err == nil {
-					fmt.Println("Already initialized: .pr-review/agent.md and skills/ exist")
-					return
+			// .pr-review/agent.md
+			agentFile := filepath.Join(".pr-review", "agent.md")
+			os.MkdirAll(filepath.Join(".pr-review", "skills"), 0o755)
+			if _, err := os.Stat(agentFile); err != nil {
+				os.WriteFile(agentFile, []byte(defaultAgentMD), 0o644)
+				created++
+			}
+
+			// .claude/commands/ — slash commands for Claude Code
+			claudeDir := filepath.Join(".claude", "commands")
+			os.MkdirAll(claudeDir, 0o755)
+			for name, content := range claudeCommands {
+				path := filepath.Join(claudeDir, name+".md")
+				if _, err := os.Stat(path); err != nil {
+					os.WriteFile(path, []byte(content), 0o644)
+					created++
 				}
 			}
 
-			os.MkdirAll(filepath.Join(".pr-review", "skills"), 0o755)
-
-			if _, err := os.Stat(agentFile); err != nil {
-				os.WriteFile(agentFile, []byte(defaultAgentMD), 0o644)
-			}
-
-			// Add to gitignore
+			// .gitignore
 			gitignoreLine := ".pr-review/reviews/"
 			data, _ := os.ReadFile(".gitignore")
 			if !strings.Contains(string(data), gitignoreLine) {
@@ -127,14 +132,170 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			color.Green("Initialized ReviewIQ:")
-			fmt.Println("  .pr-review/agent.md    — review protocol (customize this)")
-			fmt.Println("  .pr-review/skills/     — add skill .md files here")
-			fmt.Println("  .gitignore             — updated to exclude state files")
+			if created == 0 {
+				fmt.Println("Already initialized. All files exist.")
+				return
+			}
+
+			color.Green("Initialized ReviewIQ:\n")
+			fmt.Println("  .pr-review/agent.md              — review protocol")
+			fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			fmt.Println()
-			fmt.Println("Next: reviewiq review <branch>")
+			fmt.Println("  Claude Code commands (12):")
+			cmds := []string{"review-pr", "review-check", "review-explain", "review-fix",
+				"review-status", "review-ask", "review-retract", "review-wontfix",
+				"review-resolve", "review-approve", "review-summarize", "review-impact", "review-test"}
+			for _, c := range cmds {
+				if _, ok := claudeCommands[c]; ok {
+					fmt.Printf("    /%-24s .claude/commands/%s.md\n", c, c)
+				}
+			}
+			fmt.Println()
+			fmt.Println("Usage:")
+			fmt.Println("  Claude Code: /review-pr <branch>")
+			fmt.Println("  CLI:         reviewiq review <branch>")
 		},
 	}
+}
+
+var claudeCommands = map[string]string{
+	"review-pr": `Review the PR on branch: $ARGUMENTS
+
+Follow the protocol in ` + "`.pr-review/agent.md`" + `. Load relevant skills from ` + "`.pr-review/skills/`" + ` based on the changed files.
+
+## Steps
+
+1. Check for existing state: ` + "`ls .pr-review/reviews/`" + ` — if found, read the state file for prior findings.
+2. Detect base branch: ` + "`git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`" + ` (fallback: main)
+3. Get diff: ` + "`git diff <base>...$ARGUMENTS`" + `
+4. Read ALL changed files in full
+5. Load skill files from .pr-review/skills/ — always load commandments, security, scalability, stability, maintainability, performance. Then load language/framework/domain skills matching the changed files.
+6. Run the 4-stage review: Understand → Analyze (against skill checklists) → Assess (CRITICAL/IMPORTANT/NIT/QUESTION) → Report
+7. Save findings to .pr-review/reviews/pr-<N>.json per the state schema in agent.md
+
+After review, remind the developer of available commands:
+/review-check, /review-explain, /review-fix, /review-status, /review-ask, /review-retract, /review-wontfix, /review-approve, /review-summarize
+`,
+	"review-check": `Incremental re-review of branch: $ARGUMENTS
+
+The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
+
+## Steps
+1. Load state from .pr-review/reviews/ — you know which findings are open and what SHA was last reviewed.
+2. Get the incremental diff since last_reviewed_sha in state.
+3. Read all currently changed files in full.
+4. Load relevant skills from .pr-review/skills/.
+5. For each finding: RESOLVED → transition with note. PARTIALLY FIXED → note what's missing. UNRESOLVED → keep open.
+6. Check for NEW issues introduced by the fixes.
+7. Create a new review round in state, save.
+8. Output status update table and updated summary.
+`,
+	"review-explain": `Deep dive into finding: $ARGUMENTS
+
+## Steps
+1. Load state from .pr-review/reviews/ — find the finding by ID.
+2. Read the file referenced by the finding in full.
+3. Trace execution: what calls this? What does it call? Use git grep -n <symbol>.
+4. Show concrete scenarios where the issue manifests.
+5. If the developer disagrees and is right, transition to retracted.
+6. Add exchange to the finding's discussion array. Save state.
+`,
+	"review-fix": `Apply the suggested fix for finding: $ARGUMENTS
+
+## Steps
+1. Load state — find the finding by ID.
+2. Read the current file state.
+3. Apply the suggested fix (or refined version from discussion).
+4. Self-check: re-read file, verify syntax, logic, imports, no side effects.
+5. If fix touches shared code, check callers with git grep.
+6. Transition finding to resolved with note. Save state.
+`,
+	"review-status": `Show current finding statuses.
+
+## Steps
+1. Find the most recent state file in .pr-review/reviews/.
+2. Read it and output a status table:
+
+| # | Severity | Status | Title | File |
+|---|----------|--------|-------|------|
+
+Open: X | Resolved: Y | Won't fix: Z | Retracted: W | Assessment: ...
+
+Do NOT re-review. Just read and display the state file.
+`,
+	"review-ask": `Follow-up question about the review: $ARGUMENTS
+
+## Steps
+1. Load state from .pr-review/reviews/.
+2. If question references a finding, load its full context and discussion history.
+3. Read the relevant code files.
+4. Answer using loaded skill knowledge and code tracing.
+5. If answer leads to a status change, update state.
+6. Add to finding's discussion thread if applicable. Save state.
+`,
+	"review-retract": `Retract finding (agent was wrong): $ARGUMENTS
+
+Format: <finding-id> [reason]
+
+## Steps
+1. Load state. Parse finding ID and reason.
+2. Transition finding to retracted with reason. Recompute summary. Save state.
+3. Output: Finding <N>: open → retracted — <reason>
+`,
+	"review-wontfix": `Mark finding as won't fix: $ARGUMENTS
+
+Format: <finding-id> [reason]
+
+## Steps
+1. Load state. Parse finding ID and reason.
+2. Consider if reasoning is sound. If yes, transition to wontfix. If not, explain why and keep open.
+3. Record in discussion thread. Recompute summary. Save state.
+`,
+	"review-resolve": `Mark finding as resolved: $ARGUMENTS
+
+Format: <finding-id> [note]
+
+## Steps
+1. Load state. Parse finding ID and note.
+2. Transition to resolved. Recompute summary. Save state.
+3. Output: Finding <N>: open → resolved — <note>
+4. If all blockers resolved, note PR may be ready to merge.
+`,
+	"review-approve": `Final check — any blockers remaining?
+
+## Steps
+1. Load state from .pr-review/reviews/.
+2. List CRITICAL/IMPORTANT findings still open — these are blockers.
+3. Read all changed files one final time.
+4. Output BLOCKED (with list) or APPROVE (safe to merge).
+5. Update assessment in state if approved. Save state.
+`,
+	"review-summarize": `Generate a PR summary for the merge commit.
+
+## Steps
+1. Load state. Read the full diff and changed files.
+2. Generate concise summary: what changed, why, key decisions, findings addressed, trade-offs.
+3. Format for merge commit message or PR description.
+`,
+	"review-impact": `Blast radius analysis for the current PR.
+
+## Steps
+1. Load state. Get the full diff and changed files.
+2. For each changed function/class, trace ALL callers with git grep -n <symbol>.
+3. Map: direct callers, transitive dependencies, shared state, external consumers.
+4. Flag what could break in production but pass tests.
+5. Output blast radius table.
+`,
+	"review-test": `Generate test cases for the reviewed changes: $ARGUMENTS
+
+Optional: specific finding ID to focus on.
+
+## Steps
+1. Load state for open findings.
+2. Find existing test files to learn conventions.
+3. Generate tests: happy path, edge cases from findings, regression tests.
+4. Match repo's test conventions. Output test code.
+`,
 }
 
 func reviewCmd() *cobra.Command {
