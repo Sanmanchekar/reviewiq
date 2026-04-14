@@ -155,6 +155,98 @@ FINTECH_INDICATORS = {
     ],
 }
 
+INDIA_REGULATORY_INDICATORS = {
+    "imports": [
+        "upi", "npci", "nach", "ecs", "neft", "rtgs", "imps",
+        "aadhaar", "uidai", "digilocker", "ckyc", "ekyc", "e_kyc",
+        "ifsc", "rbi", "nbfc", "cersai", "gst", "gstin",
+        "razorpay", "paytm", "phonepe", "cashfree", "payu", "juspay",
+        "account_aggregator", "fip", "fiu",
+    ],
+    "files": [
+        "upi", "nach", "ecs", "neft", "rtgs", "imps",
+        "aadhaar", "ekyc", "e_kyc", "ckyc", "digilocker",
+        "nbfc", "rbi", "cersai", "gst", "mandate",
+    ],
+}
+
+CREDIT_BUREAU_INDICATORS = {
+    "imports": [
+        "cibil", "transunion", "experian", "equifax", "crif",
+        "credit_score", "credit_report", "bureau", "credit_bureau",
+        "credit_check", "credit_pull", "hard_inquiry", "soft_inquiry",
+    ],
+    "files": [
+        "bureau", "cibil", "credit_score", "credit_report", "credit_check",
+    ],
+}
+
+FRAUD_INDICATORS = {
+    "imports": [
+        "fraud", "risk_score", "risk_engine", "velocity_check",
+        "device_fingerprint", "fingerprint", "anti_fraud",
+        "suspicious", "aml", "money_laundering", "sanctions",
+        "chargeback", "dispute",
+    ],
+    "files": [
+        "fraud", "risk_engine", "risk_score", "anti_fraud",
+        "velocity", "device_fingerprint", "chargeback", "dispute",
+    ],
+}
+
+NOTIFICATION_INDICATORS = {
+    "imports": [
+        "sms", "twilio", "msg91", "kaleyra", "gupshup",
+        "sendgrid", "ses", "mailgun", "postmark",
+        "fcm", "apns", "push_notification", "firebase_messaging",
+        "whatsapp", "whatsapp_business",
+        "dlt", "trai", "dnd",
+    ],
+    "files": [
+        "notification", "sms", "email_service", "push",
+        "whatsapp", "communication", "alert_service",
+    ],
+}
+
+FINANCIAL_MICROSERVICES_INDICATORS = {
+    "imports": [
+        "saga", "compensat", "outbox", "event_sourcing",
+        "distributed_transaction", "two_phase",
+        "circuit_breaker", "bulkhead",
+        "kafka", "rabbitmq", "celery", "sidekiq",
+        "ledger_service", "payment_service", "settlement_service",
+    ],
+    "files": [
+        "saga", "orchestrat", "compensat", "outbox",
+        "event_store", "ledger_service", "settlement",
+    ],
+}
+
+DATA_PRIVACY_INDICATORS = {
+    "imports": [
+        "gdpr", "ccpa", "dpdp", "privacy", "consent",
+        "data_subject", "data_principal", "erasure", "anonymiz",
+        "pseudonymiz", "pii", "personal_data",
+        "right_to_forget", "data_protection",
+    ],
+    "files": [
+        "privacy", "consent", "gdpr", "ccpa", "dpdp",
+        "anonymiz", "pseudonymiz", "pii", "data_protection",
+        "data_deletion", "data_export",
+    ],
+}
+
+# Map of domain indicator name → (indicators_dict, skill_file_name)
+DOMAIN_INDICATORS = {
+    "fintech": (FINTECH_INDICATORS, "fintech"),
+    "india_regulatory": (INDIA_REGULATORY_INDICATORS, "india-regulatory"),
+    "credit_bureau": (CREDIT_BUREAU_INDICATORS, "credit-bureau"),
+    "fraud": (FRAUD_INDICATORS, "fraud"),
+    "notifications": (NOTIFICATION_INDICATORS, "notifications"),
+    "financial_microservices": (FINANCIAL_MICROSERVICES_INDICATORS, "financial-microservices"),
+    "data_privacy": (DATA_PRIVACY_INDICATORS, "data-privacy"),
+}
+
 
 # ── Detection Engine ─────────────────────────────────────────────────────────
 
@@ -174,7 +266,7 @@ def detect_skills(changed_files: list[str], file_contents: str = "") -> dict:
         "languages": set(),
         "frameworks": set(),
         "devops": set(),
-        "fintech": False,
+        "domains": set(),
         "always": ALWAYS_LOAD,
     }
 
@@ -221,25 +313,30 @@ def detect_skills(changed_files: list[str], file_contents: str = "") -> dict:
             if pattern.lower() in content_lower:
                 result["devops"].add("kubernetes")
 
-    # Fintech detection (content-based)
-    if file_contents:
-        for pattern in FINTECH_INDICATORS["imports"]:
-            if pattern.lower() in content_lower:
-                result["fintech"] = True
-                break
-    if not result["fintech"]:
-        for pattern in FINTECH_INDICATORS["files"]:
-            for filepath in changed_files:
-                if pattern.lower() in filepath.lower():
-                    result["fintech"] = True
+    # Domain detection (fintech, fraud, privacy, etc.)
+    for domain_name, (indicators, _) in DOMAIN_INDICATORS.items():
+        detected = False
+        if file_contents:
+            for pattern in indicators.get("imports", []):
+                if pattern.lower() in content_lower:
+                    detected = True
                     break
-            if result["fintech"]:
-                break
+        if not detected:
+            for pattern in indicators.get("files", []):
+                for filepath in changed_files:
+                    if pattern.lower() in filepath.lower():
+                        detected = True
+                        break
+                if detected:
+                    break
+        if detected:
+            result["domains"].add(domain_name)
 
     # Convert sets to sorted lists for deterministic ordering
     result["languages"] = sorted(result["languages"])
     result["frameworks"] = sorted(result["frameworks"])
     result["devops"] = sorted(result["devops"])
+    result["domains"] = sorted(result["domains"])
 
     return result
 
@@ -306,11 +403,13 @@ def load_skills(detected: dict) -> str:
             if relevant:
                 sections.append(f"# DevOps Review Rules\n\n{relevant}")
 
-    # Fintech skills
-    if detected.get("fintech"):
-        content = _load_skill_file("fintech")
-        if content:
-            sections.append(content)
+    # Domain-specific skills (fintech, fraud, privacy, etc.)
+    for domain_name in detected.get("domains", []):
+        _, skill_file = DOMAIN_INDICATORS.get(domain_name, (None, None))
+        if skill_file:
+            content = _load_skill_file(skill_file)
+            if content:
+                sections.append(content)
 
     if not sections:
         return ""
@@ -321,8 +420,10 @@ def load_skills(detected: dict) -> str:
     skills_loaded.extend(detected["languages"])
     skills_loaded.extend(detected["frameworks"])
     skills_loaded.extend(detected["devops"])
-    if detected.get("fintech"):
-        skills_loaded.append("fintech")
+    for domain_name in detected.get("domains", []):
+        _, skill_file = DOMAIN_INDICATORS.get(domain_name, (None, None))
+        if skill_file:
+            skills_loaded.append(skill_file)
 
     header += f"**Skills loaded**: {', '.join(skills_loaded)}\n\n"
     return header + "\n\n---\n\n".join(sections)
