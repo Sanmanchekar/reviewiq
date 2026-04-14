@@ -61,6 +61,16 @@ go build -o /usr/local/bin/reviewiq ./cmd/reviewiq/
 ln -s /usr/local/bin/reviewiq /usr/local/bin/riq
 ```
 
+### Update / Uninstall
+
+```bash
+# Update (same as install — overwrites the binary)
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
+
+# Uninstall
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh | bash
+```
+
 ### Initialize in Your Repo
 
 ```bash
@@ -538,6 +548,7 @@ internal/
 go.mod                          Go module definition
 go.sum                          Dependency checksums
 install.sh                      One-line installer
+uninstall.sh                    One-line uninstaller
 ```
 
 ---
