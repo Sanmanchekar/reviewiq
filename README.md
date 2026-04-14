@@ -71,20 +71,9 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.s
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh | bash
 ```
 
-### Initialize in Your Repo
-
-```bash
-cd your-project/
-reviewiq init
-```
-
-This creates:
-- `.pr-review/agent.md` — review protocol
-- `.pr-review/skills/` — add domain skill files here
-- `.claude/commands/` — 13 Claude Code slash commands
-- `.gitignore` — updated to exclude state files
-
 ### Usage
+
+The installer auto-runs `reviewiq init` if you're inside a git repo — it creates `.pr-review/` (protocol + skills), `.claude/commands/` (13 slash commands), and updates `.gitignore`. For other repos, run `reviewiq init` manually.
 
 **Claude Code (slash commands — no API key needed):**
 ```bash
@@ -123,7 +112,7 @@ Developer pushes fix → Agent re-reviews incrementally
 
 13 slash commands that work inside Claude Code. No API key, no binary — Claude Code is the LLM.
 
-Run `reviewiq init` in your repo to scaffold all commands, then open Claude Code.
+The installer scaffolds all commands automatically. For additional repos, run `reviewiq init`.
 
 ### Review Commands
 
