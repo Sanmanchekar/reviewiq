@@ -14,12 +14,12 @@
 
 **16 review skills across 4 surfaces — CLI, CI, AI agents, and GitHub comments — powered by stateful finding tracking.**
 
-[Quick Start](#-quick-start) |
-[Review Workflow](#-review-workflow) |
-[CLI Commands](#-cli-commands) |
-[Skills System](#-skills-system) |
-[Architecture](#-architecture) |
-[CI Integration](#-ci-integration)
+[Quick Start](#quick-start) |
+[Review Workflow](#review-workflow) |
+[CLI Commands](#cli-commands) |
+[Skills System](#skills-system) |
+[Architecture](#architecture) |
+[CI Integration](#ci-integration)
 
 </div>
 
@@ -518,6 +518,8 @@ internal/
   review-pr.md              Claude Code slash command
 .github/workflows/
   pr-review.yml             GitHub Actions workflow
+go.mod                      Go module definition
+go.sum                      Dependency checksums
 install.sh                  One-line installer
 ```
 
