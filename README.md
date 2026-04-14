@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**One install, works everywhere. 16 review skills, natural language commands in Claude Code, CLI + CI support — powered by stateful finding tracking.**
+**One install, works everywhere. 14 commands, 16 review skills — review PRs, post inline suggestions, track findings across sessions.**
 
 [Quick Start](#quick-start) |
 [Claude Code Commands](#claude-code-commands) |
@@ -77,15 +77,18 @@ The installer sets up everything globally — binary, skills (`~/.reviewiq/skill
 
 **Claude Code (just talk naturally — no API key needed):**
 ```bash
-# Review a PR by link (file-by-file, posts inline comments)
-review-pr https://github.com/owner/repo/pull/42
+# Full PR review — one shot, posts everything to PR
+/review-full https://github.com/owner/repo/pull/42
+
+# File-by-file interactive review
+/review-pr https://github.com/owner/repo/pull/42
 
 # Or review current branch
 review this PR                              # auto-detects: current branch → main
 review this PR to develop                   # explicit target branch
 
 # After review, continue naturally:
-next                                        # move to next file
+next                                        # move to next file (review-pr mode)
 explain finding 2                           # deep dive
 fix finding 1                               # applies the fix
 post                                        # post findings as PR inline comments
@@ -98,12 +101,13 @@ approve                                     # final check
 export ANTHROPIC_API_KEY=sk-ant-...
 export GITHUB_TOKEN=ghp_...
 
-# Review PR by link — file by file
-reviewiq review-pr https://github.com/owner/repo/pull/42
-reviewiq review-pr 42                       # if inside the repo
+# Full PR review — one shot, auto-posts to PR
+reviewiq review-full https://github.com/owner/repo/pull/42
+reviewiq review-full 42                     # if inside the repo
 
-# Post findings as inline PR comments with suggestion blocks
-reviewiq review-pr 42 --post
+# File-by-file interactive review
+reviewiq review-pr https://github.com/owner/repo/pull/42
+reviewiq review-pr 42 --post                # post inline comments
 
 # Branch-based review (no PR link needed)
 reviewiq review feature/webhook-retries
@@ -131,6 +135,8 @@ Works globally in Claude Code — just talk naturally. The installer sets up `~/
 
 | What you say | What happens |
 |-------------|--------------|
+| `/review-full <PR-link>` | Full review, all files at once, auto-posts comments + suggestions to PR |
+| `/review-pr <PR-link>` | File-by-file interactive review with inline PR comments |
 | `review this PR` | Full 4-stage review (auto-detects current branch → main) |
 | `review this PR to develop` | Review current branch against develop |
 | `check review` / `re-review` | Incremental re-review after pushing fixes |
@@ -147,9 +153,9 @@ Works globally in Claude Code — just talk naturally. The installer sets up `~/
 
 ### Slash Commands (also available)
 
-If you run `reviewiq init` in a repo, 13 `/review-*` slash commands are also created:
+If you run `reviewiq init` in a repo, 14 `/review-*` slash commands are also created:
 
-`/review-pr`, `/review-check`, `/review-explain`, `/review-fix`, `/review-status`, `/review-ask`, `/review-resolve`, `/review-retract`, `/review-wontfix`, `/review-approve`, `/review-summarize`, `/review-impact`, `/review-test`
+`/review-full`, `/review-pr`, `/review-check`, `/review-explain`, `/review-fix`, `/review-status`, `/review-ask`, `/review-resolve`, `/review-retract`, `/review-wontfix`, `/review-approve`, `/review-summarize`, `/review-impact`, `/review-test`
 
 ### Typical Flow
 
@@ -294,8 +300,10 @@ The Go binary for terminal and CI use. Requires `ANTHROPIC_API_KEY`.
 
 | Command | Purpose | State Change |
 |---------|---------|--------------|
+| `reviewiq review-full <PR>` | Full review, all files, auto-posts to PR | Creates findings + posts |
+| `reviewiq review-pr <PR>` | File-by-file interactive review | Creates findings per file |
 | `reviewiq init` | Initialize `.pr-review/` + `.claude/commands/` | Creates all files |
-| `reviewiq review <branch>` | Full 4-stage review | Creates findings (open) |
+| `reviewiq review <branch>` | Branch-based review (local) | Creates findings (open) |
 | `reviewiq check <branch>` | Incremental re-review | Updates finding statuses |
 | `reviewiq status` | Show finding status table | Read-only |
 | `reviewiq explain <N>` | Deep dive into finding N | Adds to discussion thread |
@@ -423,7 +431,9 @@ Commands map 1:1 between Claude Code and CLI:
 
 | Action | Claude Code | CLI |
 |--------|-------------|-----|
-| Full review | `/review-pr <branch>` | `reviewiq review <branch>` |
+| Full PR review (one shot) | `/review-full <PR-link>` | `reviewiq review-full <PR-link>` |
+| File-by-file PR review | `/review-pr <PR-link>` | `reviewiq review-pr <PR-link> --post` |
+| Branch review (local) | `review this PR` | `reviewiq review <branch>` |
 | Re-review | `/review-check <branch>` | `reviewiq check <branch>` |
 | Status | `/review-status` | `reviewiq status` |
 | Explain | `/review-explain <N>` | `reviewiq explain <N>` |
@@ -521,6 +531,7 @@ internal/
   engine/engine.go              Review engine (Claude API, structured output)
   git/git.go                    Git operations
   skills/skills.go              Skill auto-detection and loading
+  github/github.go              GitHub API (PR fetch, inline comments, suggestions)
   ci/ci.go                      CI mode (GitHub Actions webhook handler)
 .pr-review/
   agent.md                      Review protocol (customize per repo)
@@ -541,8 +552,9 @@ internal/
     notifications.md            SMS/email/push/WhatsApp compliance
     financial-microservices.md  Saga/outbox/distributed transactions
     data-privacy.md             DPDP/GDPR/CCPA compliance
-.claude/commands/               13 Claude Code slash commands
-  review-pr.md                  /review-pr <branch>
+.claude/commands/               14 Claude Code slash commands
+  review-full.md                /review-full <PR> — one-shot full review + post
+  review-pr.md                  /review-pr <PR> — file-by-file interactive
   review-check.md               /review-check <branch>
   review-explain.md             /review-explain <N>
   review-fix.md                 /review-fix <N>

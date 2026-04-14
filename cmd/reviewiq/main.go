@@ -30,9 +30,9 @@ func main() {
 		Version: version,
 	}
 
-	root.AddCommand(initCmd(), reviewCmd(), reviewPRCmd(), checkCmd(), statusCmd(),
-		explainCmd(), askCmd(), resolveCmd(), retractCmd(), wontfixCmd(),
-		approveCmd(), ciCmd())
+	root.AddCommand(initCmd(), reviewCmd(), reviewPRCmd(), reviewFullCmd(),
+		checkCmd(), statusCmd(), explainCmd(), askCmd(),
+		resolveCmd(), retractCmd(), wontfixCmd(), approveCmd(), ciCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -143,8 +143,8 @@ func initCmd() *cobra.Command {
 			fmt.Println("  .pr-review/agent.md              — review protocol")
 			fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			fmt.Println()
-			fmt.Println("  Claude Code commands (12):")
-			cmds := []string{"review-pr", "review-check", "review-explain", "review-fix",
+			fmt.Println("  Claude Code commands (14):")
+			cmds := []string{"review-full", "review-pr", "review-check", "review-explain", "review-fix",
 				"review-status", "review-ask", "review-retract", "review-wontfix",
 				"review-resolve", "review-approve", "review-summarize", "review-impact", "review-test"}
 			for _, c := range cmds {
@@ -154,14 +154,32 @@ func initCmd() *cobra.Command {
 			}
 			fmt.Println()
 			fmt.Println("Usage:")
-			fmt.Println("  Claude Code: /review-pr <branch>")
-			fmt.Println("  CLI:         reviewiq review <branch>")
+			fmt.Println("  Claude Code: /review-full <PR-link>   (one-shot, auto-posts)")
+			fmt.Println("               /review-pr <PR-link>     (file-by-file)")
+			fmt.Println("  CLI:         reviewiq review-full <PR-link>")
+			fmt.Println("               reviewiq review-pr <PR-link> --post")
 		},
 	}
 }
 
 var claudeCommands = map[string]string{
-	"review-pr": `Review the PR on branch: $ARGUMENTS
+	"review-full": `Full PR review in one shot: $ARGUMENTS
+
+$ARGUMENTS: GitHub PR link or number.
+
+Reviews entire diff at once, posts inline comments with suggestion blocks, and summary to the PR. No interaction needed.
+
+## Steps
+1. Fetch PR: ` + "`gh pr view <number> --json title,author,baseRefName,headRefName,files`" + `
+2. Get full diff: ` + "`gh pr diff <number>`" + `
+3. Read ALL changed files in full
+4. Load ALL relevant skills from ~/.reviewiq/skills/ or .pr-review/skills/
+5. Run 4-stage review with cross-file analysis
+6. Post inline comments with suggestion blocks on each finding
+7. Post summary comment with finding table and assessment
+8. Save state to .pr-review/reviews/pr-<N>.json
+`,
+	"review-pr": `Review the PR: $ARGUMENTS
 
 Follow the protocol in ` + "`.pr-review/agent.md`" + `. Load relevant skills from ` + "`.pr-review/skills/`" + ` based on the changed files.
 
@@ -863,6 +881,265 @@ Keep it focused — this is one file, not the whole PR.`,
 		},
 	}
 	cmd.Flags().BoolVar(&post, "post", false, "Post findings as inline comments on the PR")
+	return cmd
+}
+
+func reviewFullCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "review-full <pr-link-or-number>",
+		Short: "Full PR review in one shot — review all files, post comments, suggestions, and resolutions",
+		Long: `Reviews the entire PR diff at once using all relevant skills,
+then posts a complete review with inline comments, suggestion
+blocks, and resolution recommendations on the PR.
+
+Unlike review-pr (file-by-file interactive), this runs end-to-end
+in one command with no user interaction.
+
+Examples:
+  reviewiq review-full https://github.com/owner/repo/pull/42
+  reviewiq review-full 42`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			input := args[0]
+
+			var owner, repo string
+			var prNumber int
+
+			if strings.Contains(input, "github.com") {
+				var err error
+				owner, repo, prNumber, err = gh.ParsePRLink(input)
+				if err != nil {
+					color.Red("%s", err)
+					os.Exit(1)
+				}
+			} else {
+				prNumber, _ = strconv.Atoi(input)
+				if prNumber == 0 {
+					color.Red("Invalid input. Provide a PR link or number.")
+					os.Exit(1)
+				}
+				remote := gitops.Run("remote", "get-url", "origin")
+				re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
+				m := re.FindStringSubmatch(remote)
+				if m == nil {
+					color.Red("Cannot detect GitHub repo from remote. Use full PR link.")
+					os.Exit(1)
+				}
+				owner, repo = m[1], m[2]
+			}
+
+			bold := color.New(color.Bold)
+			step := color.New(color.FgCyan)
+
+			// ── Fetch PR ────────────────────────────────────────────────
+			step.Printf("[reviewiq] Fetching PR #%d from %s/%s...\n", prNumber, owner, repo)
+
+			prInfo, err := gh.GetPR(owner, repo, prNumber)
+			if err != nil {
+				color.Red("Failed to fetch PR: %s", err)
+				os.Exit(1)
+			}
+
+			files, err := gh.GetPRFiles(owner, repo, prNumber)
+			if err != nil {
+				color.Red("Failed to fetch PR files: %s", err)
+				os.Exit(1)
+			}
+
+			fmt.Println()
+			bold.Printf("PR #%d: %s\n", prNumber, prInfo.Title)
+			fmt.Printf("Author: @%s | Branch: %s → %s | Files: %d\n\n",
+				prInfo.Author, prInfo.HeadBranch, prInfo.BaseBranch, len(files))
+
+			// ── Build full diff + detect all skills ─────────────────────
+			step.Println("[reviewiq] Assembling full diff and detecting skills...")
+
+			var fullDiff strings.Builder
+			var allFilenames []string
+			var allPatches strings.Builder
+			totalAdded, totalRemoved := 0, 0
+
+			for _, f := range files {
+				allFilenames = append(allFilenames, f.Filename)
+				totalAdded += f.Additions
+				totalRemoved += f.Deletions
+				if f.Patch != "" {
+					fullDiff.WriteString(fmt.Sprintf("--- a/%s\n+++ b/%s\n%s\n\n", f.Filename, f.Filename, f.Patch))
+					allPatches.WriteString(f.Patch + "\n")
+				}
+			}
+
+			// Detect skills across ALL files at once
+			detected := skills.Detect(allFilenames, allPatches.String())
+			skillPrompt := skills.LoadSkills(detected)
+
+			var loadedSkills []string
+			loadedSkills = append(loadedSkills, detected.Always...)
+			loadedSkills = append(loadedSkills, detected.Languages...)
+			loadedSkills = append(loadedSkills, detected.Frameworks...)
+			loadedSkills = append(loadedSkills, detected.DevOps...)
+			loadedSkills = append(loadedSkills, detected.Domains...)
+			fmt.Printf("Skills loaded: %s\n", strings.Join(loadedSkills, ", "))
+			fmt.Printf("Diff size: +%d -%d across %d files\n\n", totalAdded, totalRemoved, len(files))
+
+			// ── Read full file contents ─────────────────────────────────
+			step.Println("[reviewiq] Reading full file contents...")
+			var fileContents strings.Builder
+			for _, f := range files {
+				if f.Patch == "" {
+					continue
+				}
+				content, err := gh.GetFileContent(owner, repo, prInfo.HeadSHA, f.Filename)
+				if err != nil {
+					continue
+				}
+				fileContents.WriteString(fmt.Sprintf("--- FILE: %s ---\n%s\n--- END: %s ---\n\n", f.Filename, content, f.Filename))
+			}
+
+			// ── Load state ──────────────────────────────────────────────
+			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo), "auto")
+			s.PR.Title = prInfo.Title
+			s.PR.Author = prInfo.Author
+			s.PR.BaseBranch = prInfo.BaseBranch
+			s.PR.HeadBranch = prInfo.HeadBranch
+			s.PR.Repo = fmt.Sprintf("%s/%s", owner, repo)
+
+			round := len(s.ReviewRounds) + 1
+			s.ReviewRounds = append(s.ReviewRounds, state.NewReviewRound(
+				round, prInfo.HeadSHA, prInfo.BaseSHA, "review-full", allFilenames,
+			))
+			s.Summary.LastReviewedSHA = prInfo.HeadSHA
+
+			// ── Run full review via Claude API ──────────────────────────
+			step.Println("[reviewiq] Running full review...")
+
+			sysPrompt := engine.ReadSystemPrompt(allFilenames, allPatches.String())
+			if skillPrompt != "" {
+				sysPrompt += "\n\n" + skillPrompt
+			}
+			sysPrompt += engine.StructuredOutputInstruction
+
+			// Add cross-file analysis instruction
+			sysPrompt += `
+
+## CROSS-FILE ANALYSIS
+
+This is a full PR review (all files at once). In addition to per-file checks:
+1. Check if changes in one file break assumptions in another
+2. Verify consistent error handling across all changed files
+3. Check for missing changes (e.g., updated model but not the migration)
+4. Verify test coverage for all changed functionality
+5. For each finding, specify the EXACT file path and line number
+
+Format each finding's suggested_fix as the exact replacement code that should go
+inside a GitHub suggestion block — it will be posted as an inline PR comment.
+`
+
+			userPrompt := fmt.Sprintf(`Review this entire PR in one pass.
+
+## PR #%d: %s
+Author: @%s | Branch: %s → %s
+
+## Full Diff
+`+"```diff"+`
+%s
+`+"```"+`
+
+## Full File Contents
+%s
+
+## Instructions
+1. Review ALL files against the loaded skills
+2. Cross-file analysis: check for inconsistencies between files
+3. For each finding: exact file path, exact line number, severity, concrete fix
+4. Each suggested_fix must be the exact replacement code (for GitHub suggestion blocks)
+5. End with overall assessment and key risks
+
+This is review round %d.`,
+				prNumber, prInfo.Title, prInfo.Author, prInfo.HeadBranch, prInfo.BaseBranch,
+				fullDiff.String(), fileContents.String(), round)
+
+			s.AddMessage("system", fmt.Sprintf("Full PR review round %d.", round), round, nil)
+			s.AddMessage("developer", userPrompt, round, nil)
+
+			messages := s.GetConversationForLLM()
+
+			response, err := engine.CallClaude(sysPrompt, messages)
+			if err != nil {
+				color.Red("Review failed: %s", err)
+				os.Exit(1)
+			}
+
+			humanResponse := engine.ParseStructuredOutput(response, s, round)
+			s.AddMessage("agent", humanResponse, round, nil)
+
+			// Print the review
+			fmt.Println(humanResponse)
+
+			// ── Build inline comments ───────────────────────────────────
+			var comments []gh.InlineComment
+			for _, f := range s.Findings {
+				if f.CreatedRound == round {
+					comments = append(comments, gh.InlineComment{
+						Path: f.File,
+						Line: f.Line,
+						Body: gh.FormatSuggestion(f.Severity, f.Title, f.Problem, f.SuggestedFix, f.FixRationale),
+					})
+				}
+			}
+
+			// ── Post to PR ──────────────────────────────────────────────
+			if len(comments) > 0 {
+				step.Printf("\n[reviewiq] Posting review to PR #%d (%d inline comments)...\n", prNumber, len(comments))
+
+				summaryBody := fmt.Sprintf("## ReviewIQ Full Review\n\n"+
+					"**%d findings** across %d files (+%d, -%d) | Assessment: **%s**\n\n"+
+					"| Severity | Count |\n|---|---|\n"+
+					"| CRITICAL | %d |\n| IMPORTANT | %d |\n| NIT | %d |\n| QUESTION | %d |\n\n"+
+					"Skills used: %s\n\n"+
+					"_Each finding is posted as an inline comment with a `suggestion` block — click \"Apply suggestion\" to fix._",
+					s.Summary.TotalFindings, len(files), totalAdded, totalRemoved, s.Summary.Assessment,
+					countBySeverity(s, "CRITICAL"), countBySeverity(s, "IMPORTANT"),
+					countBySeverity(s, "NIT"), countBySeverity(s, "QUESTION"),
+					strings.Join(loadedSkills, ", "))
+
+				event := "COMMENT"
+				if countBySeverity(s, "CRITICAL") > 0 || countBySeverity(s, "IMPORTANT") > 0 {
+					event = "REQUEST_CHANGES"
+				} else if s.Summary.Open == 0 {
+					event = "APPROVE"
+				}
+
+				if err := gh.PostReview(owner, repo, prNumber, prInfo.HeadSHA, summaryBody, event, comments); err != nil {
+					color.Red("Failed to post review: %s", err)
+					// Fallback: post as regular comment
+					if err2 := gh.PostPRComment(owner, repo, prNumber, summaryBody+"\n\n"+humanResponse); err2 != nil {
+						color.Red("Fallback also failed: %s", err2)
+					} else {
+						color.Yellow("Posted as regular comment (inline comments failed)")
+					}
+				} else {
+					color.Green("Review posted to PR #%d: %d inline comments + summary", prNumber, len(comments))
+				}
+			} else {
+				color.Green("No findings — PR looks good!")
+				if err := gh.PostPRComment(owner, repo, prNumber, "## ReviewIQ\n\nNo findings. LGTM!"); err != nil {
+					color.Red("Failed to post comment: %s", err)
+				}
+			}
+
+			// ── Save state and print summary ────────────────────────────
+			state.Save(s, "both")
+
+			fmt.Println()
+			bold.Println("Review Complete")
+			fmt.Printf("Findings: %d (CRITICAL: %d, IMPORTANT: %d, NIT: %d)\n",
+				s.Summary.TotalFindings,
+				countBySeverity(s, "CRITICAL"), countBySeverity(s, "IMPORTANT"), countBySeverity(s, "NIT"))
+			fmt.Printf("Assessment: %s\n", s.Summary.Assessment)
+			fmt.Printf("State: .pr-review/reviews/pr-%d.json\n", prNumber)
+		},
+	}
 	return cmd
 }
 
