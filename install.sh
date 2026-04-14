@@ -132,6 +132,25 @@ build_and_install() {
     info "Built and installed to $INSTALL_DIR/$BINARY"
 }
 
+auto_init() {
+    # Run reviewiq init in the current directory if it's a git repo
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        local repo_root
+        repo_root="$(git rev-parse --show-toplevel)"
+        if [[ ! -f "$repo_root/.pr-review/agent.md" ]] || [[ ! -d "$repo_root/.claude/commands" ]]; then
+            step "Detected git repo at $repo_root — running reviewiq init..."
+            cd "$repo_root"
+            reviewiq init
+            cd - >/dev/null
+        else
+            info "Repo already initialized (.pr-review/ and .claude/commands/ exist)"
+        fi
+    else
+        info "Not inside a git repo — skipping auto-init."
+        info "Run 'reviewiq init' inside any git repo to set up slash commands."
+    fi
+}
+
 verify() {
     if command -v reviewiq &>/dev/null; then
         local ver
@@ -141,14 +160,10 @@ verify() {
         echo -e "  ${ver}"
         echo -e "  Binary: $(command -v reviewiq)"
         echo ""
-        echo -e "${BOLD}Quick start:${NC}"
-        echo -e "  cd your-project/"
-        echo -e "  reviewiq init          ${CYAN}# sets up skills + Claude Code commands${NC}"
-        echo -e "  reviewiq review <branch>${CYAN}# review a PR branch (needs ANTHROPIC_API_KEY)${NC}"
-        echo ""
-        echo -e "${BOLD}Claude Code:${NC}"
-        echo -e "  After 'reviewiq init', open Claude Code in the repo."
-        echo -e "  Use /review-pr <branch> and 12 other /review-* commands."
+        echo -e "${BOLD}Usage:${NC}"
+        echo -e "  ${CYAN}Claude Code:${NC}  /review-pr <branch>  (+ 12 other /review-* commands)"
+        echo -e "  ${CYAN}CLI:${NC}          reviewiq review <branch>  (needs ANTHROPIC_API_KEY)"
+        echo -e "  ${CYAN}New repo:${NC}     cd other-project/ && reviewiq init"
         echo ""
         if [[ -n "$SHELL_RC" ]] && ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR" 2>/dev/null; then
             echo -e "${YELLOW}Note: Restart your terminal or run:${NC}"
@@ -177,6 +192,7 @@ main() {
     ensure_install_dir
     add_to_path
     build_and_install
+    auto_init
     verify
 }
 
