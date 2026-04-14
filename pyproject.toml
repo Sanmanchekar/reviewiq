@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reviewiq"
+version = "1.0.0"
+description = "Stateful AI-powered PR review agent with finding lifecycle tracking"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Sanmanchekar"}
+]
+keywords = [
+    "code-review",
+    "pr-review",
+    "ai",
+    "claude",
+    "github",
+    "static-analysis",
+    "developer-tools",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.urls]
+Homepage = "https://github.com/Sanmanchekar/reviewiq"
+Repository = "https://github.com/Sanmanchekar/reviewiq"
+Issues = "https://github.com/Sanmanchekar/reviewiq/issues"
+
+[project.scripts]
+reviewiq = "reviewiq.cli:main"
+riq = "reviewiq.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reviewiq = ["templates/*.md"]

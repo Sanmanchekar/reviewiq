@@ -1,2 +1,17 @@
-# Review state files (persisted in PR comments for CI, local-only for CLI)
+# ReviewIQ state files
 .pr-review/reviews/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Environments
+.venv/
+venv/
+ENV/

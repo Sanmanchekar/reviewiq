@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 ReviewIQ State Manager
 
@@ -16,12 +18,10 @@ import json
 import base64
 import os
 import re
-import subprocess
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 
 # ── State Schema ─────────────────────────────────────────────────────────────

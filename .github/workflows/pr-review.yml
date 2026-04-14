@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   review:
-    # Run on PR open/push, or on comments that mention @review-agent
     if: >
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
@@ -39,6 +38,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install ReviewIQ
+        run: pip install .
+
       - name: Determine event context
         id: context
         run: |
@@ -55,9 +57,8 @@ jobs:
             echo "$EOF" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run review agent
-        working-directory: ${{ github.workspace }}
-        run: python scripts/review_agent.py
+      - name: Run ReviewIQ
+        run: reviewiq ci
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,4 +66,3 @@ jobs:
           PR_NUMBER: ${{ steps.context.outputs.pr_number }}
           EVENT_TYPE: ${{ steps.context.outputs.event_type }}
           COMMENT_BODY: ${{ steps.context.outputs.comment_body }}
-          PYTHONPATH: ${{ github.workspace }}/scripts

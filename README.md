@@ -1,6 +1,68 @@
 # ReviewIQ
 
-Stateful PR review agent that works across any AI coding tool. Findings are tracked objects with lifecycles, conversations carry full history, and incremental reviews diff against known state.
+Stateful AI-powered PR review agent with finding lifecycle tracking. Works as a CLI, in any AI coding tool, and as a GitHub Actions bot.
+
+## Install
+
+```bash
+pip install git+https://github.com/Sanmanchekar/reviewiq.git
+```
+
+Or clone and install locally:
+
+```bash
+git clone https://github.com/Sanmanchekar/reviewiq.git
+cd reviewiq
+pip install .
+```
+
+Two entry points are available: `reviewiq` and `riq` (shorthand).
+
+## Quick Start
+
+```bash
+# Initialize in your repo
+reviewiq init
+
+# Review a PR branch
+reviewiq review feature/webhook-retries
+
+# Check findings
+reviewiq status
+
+# After developer pushes fixes
+reviewiq check feature/webhook-retries
+
+# Deep dive into a finding
+reviewiq explain 2
+
+# Ask a follow-up question
+reviewiq ask "why is finding 1 critical? our volume is only 100/day"
+
+# Transition findings
+reviewiq resolve 1 --note "backoff added with jitter"
+reviewiq retract 3 --note "ORM handles parameterization"
+reviewiq wontfix 2 --note "acceptable risk at our scale"
+
+# Final check
+reviewiq approve
+```
+
+## CLI Reference
+
+```
+reviewiq init                          Initialize .pr-review/ in current repo
+reviewiq review <branch> [--base main] Full review of a PR branch
+reviewiq check <branch>                Incremental re-review after new commits
+reviewiq status [--pr N]               Show all findings with current statuses
+reviewiq explain <finding-id>          Deep dive into a specific finding
+reviewiq ask <question>                Ask a follow-up question
+reviewiq resolve <finding-id> [-n ""]  Mark finding as resolved
+reviewiq retract <finding-id> [-n ""]  Retract a finding (agent was wrong)
+reviewiq wontfix <finding-id> [-n ""]  Mark as won't fix
+reviewiq approve                       Final check — any blockers left?
+reviewiq ci                            Run in CI mode (GitHub Actions)
+```
 
 ## Architecture
 
@@ -13,12 +75,12 @@ Developer opens PR ──→ Agent posts initial review
                               │
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
-     Claude Code          Codex/Cursor        GitHub Comment
-     "/review-pr feat"    "review this PR"    "@review-agent why?"
+     CLI (reviewiq)      AI Agent (any)       GitHub Comment
+     reviewiq review     "review this PR"     @review-agent
           │                   │                   │
           └───────────────────┼───────────────────┘
                               ▼
-                      Stateful Agent
+                      Stateful Engine
                     (loads prior findings,
                      conversation history,
                      review round SHAs)
@@ -29,42 +91,21 @@ Developer opens PR ──→ Agent posts initial review
                     Response in same surface
 ```
 
-**The key difference from stateless**: the agent doesn't re-derive findings by parsing old comments. It loads structured state — each finding is a tracked object with an ID, lifecycle status, and discussion thread. Conversation history is sent as proper multi-turn messages, so the LLM has genuine conversational memory.
-
 ## State Model
 
-State is persisted as JSON with dual backends:
+State persists as JSON with dual backends:
 
 | Backend | Where | When |
 |---------|-------|------|
-| **Local file** | `.pr-review/reviews/pr-<N>.json` | CLI mode (Claude Code, Cursor, etc.) |
+| **Local file** | `.pr-review/reviews/pr-<N>.json` | CLI mode |
 | **PR comment** | Hidden comment with base64 payload | CI mode (GitHub Actions) |
-
-Both stay in sync when running in CI. CLI mode writes local files only.
-
-### What's Tracked
-
-```
-State
-├── pr                    PR metadata (title, author, branches)
-├── review_rounds[]       Each review pass with SHA + timestamp
-│   └── {round, head_sha, base_sha, files_reviewed}
-├── findings{}            Tracked objects with lifecycle
-│   └── {id, title, severity, status, file, line,
-│        problem, impact, suggested_fix,
-│        status_history[], discussion[]}
-├── conversation[]        Full message history for LLM context
-│   └── {role, content, round, timestamp}
-└── summary               Computed counters + assessment
-    └── {open, resolved, wontfix, retracted, assessment}
-```
 
 ### Finding Lifecycle
 
 ```
 open ──→ resolved          developer fixed it
      ──→ partially_fixed   partially addressed
-     ──→ wontfix           developer won't fix, agent accepts
+     ──→ wontfix           developer won't fix, accepted
      ──→ retracted         agent was wrong
 
 partially_fixed ──→ resolved | wontfix
@@ -72,193 +113,87 @@ partially_fixed ──→ resolved | wontfix
 
 Every transition is recorded with timestamp, round number, and note.
 
-## Quick Start
+### What's Tracked
 
-### Option 1: Claude Code (zero setup)
+```
+State
+├── pr                    PR metadata
+├── review_rounds[]       Each review pass with SHA + timestamp
+├── findings{}            Tracked objects with lifecycle
+│   └── {id, severity, status, file, line, problem, 
+│        suggested_fix, status_history[], discussion[]}
+├── conversation[]        Full message history for LLM context
+└── summary               Computed counters + assessment
+```
+
+## Using with AI Coding Tools
+
+### Claude Code
 
 Copy `.pr-review/` and `.claude/commands/` into your repo:
 
 ```bash
-# First review — creates state file
 /review-pr feature/webhook-retries
-
-# Continue the conversation — state is loaded automatically
-> "explain finding 2"
-> "fix finding 1"           # transitions finding 1 to resolved
-> "retract finding 3"       # agent was wrong about this one
-
-# After developer pushes fixes
-> "check"                   # incremental diff against last reviewed SHA
-                            # reports: resolved / partially fixed / new issues
-
-# Check current state anytime
-> "status"                  # table of all findings with current statuses
 ```
 
-State persists at `.pr-review/reviews/pr-<N>.json` — pick up where you left off in any session.
+Then continue conversationally — state persists in `.pr-review/reviews/`.
 
-### Option 2: Any AI Agent (Codex, Cursor, Aider, Cline)
+### Cursor / Codex / Aider / Cline
 
-Drop `.pr-review/agent.md` into your repo. The protocol instructs any agent to read/write the state file:
-
-```
-"Review the PR on branch feature/webhook-retries, following the protocol in .pr-review/agent.md"
-```
-
-The agent will create `.pr-review/reviews/pr-<N>.json` on first review and load it on subsequent interactions.
-
-### Option 3: GitHub Actions (fully automated)
-
-1. Add your Anthropic API key as a repository secret:
-   ```
-   Settings > Secrets > Actions > New repository secret
-   Name: ANTHROPIC_API_KEY
-   ```
-
-2. Copy these into your repo:
-   - `.pr-review/agent.md`
-   - `scripts/state.py`
-   - `scripts/review_agent.py`
-   - `.github/workflows/pr-review.yml`
-
-3. Open a PR. The agent:
-   - Posts a structured review
-   - Saves state as a hidden PR comment (survives across workflow runs)
-   - On subsequent pushes, loads state and posts incremental re-review
-   - On `@review-agent` comments, loads full conversation history
-
-4. Interact via comments:
-   ```
-   @review-agent explain finding 2
-   @review-agent why is finding 1 critical? our volume is only 100/day
-   @review-agent status
-   ```
-
-## Interaction Commands
-
-| Command | What happens | State change |
-|---|---|---|
-| `review` | Full 4-stage review | Creates findings (open), saves state |
-| `explain <N>` | Deep dive with code tracing | Adds to finding's discussion thread |
-| `fix <N>` | Apply the suggested fix | Finding → resolved |
-| `check` | Incremental re-review | Updates statuses, new review round |
-| `impact` | Trace blast radius | Read-only |
-| `test` | Generate test cases for open findings | Read-only |
-| `compare <approach>` | Evaluate alternative | May update finding's suggested_fix |
-| `retract <N>` | Agent was wrong | Finding → retracted |
-| `wontfix <N>` | Developer won't fix (accepted) | Finding → wontfix |
-| `status` | Current state summary | Read-only |
-| `approve` | Final check | Assessment → APPROVE (if clear) |
-| `summarize` | Merge commit summary | Read-only |
-
-## Incremental Re-review
-
-The killer feature, now with state tracking:
+Drop `.pr-review/agent.md` into your repo and reference it:
 
 ```
-Developer: "pushed fixes, check again"
-
-Agent loads state:
-  - Knows exactly which SHA it last reviewed
-  - Knows all 3 open findings and their details
-  - Diffs only the changes since last review
-
-Agent response:
-  ## Re-review (Round 2)
-  Changes since: abc1234...def5678
-
-  - Finding 1 [CRITICAL]: ~~open~~ → **resolved** — backoff with jitter added
-  - Finding 2 [IMPORTANT]: open → **partially_fixed** — retry limit added, no circuit breaker
-  - Finding 4 [NIT]: **NEW** — typo in error message on line 92
-
-  Summary: 1 resolved, 1 partial, 1 new nit
-  Assessment: REQUEST CHANGES → NEEDS DISCUSSION
+Review the PR on branch feature/webhook-retries, following .pr-review/agent.md
 ```
 
-No re-parsing old comments. No guessing what was fixed. The agent knows.
+## GitHub Actions (Automated)
 
-## Conversation Continuity
+1. Add `ANTHROPIC_API_KEY` as a repository secret
 
-The stateful engine sends **full conversation history** to Claude as multi-turn messages, not a single reconstructed prompt. This means:
+2. The workflow at `.github/workflows/pr-review.yml` handles:
+   - PR opened → full review
+   - Push to PR → incremental re-review
+   - `@review-agent <question>` in comments → contextual reply
 
-```
-Developer: "finding 2 — won't adding a lock here cause deadlock 
-            with the existing mutex on line 40?"
+State survives across workflow runs via hidden PR comments.
 
-Agent: *already has full context from prior turns*
-       "You're right — there's a lock ordering issue..."
+## Finding Severity Levels
 
-Developer: "ok, what about using a channel instead?"
-
-Agent: *references both prior messages naturally*
-       "That would solve the ordering issue. Updating finding 2's
-        suggested fix to use a buffered channel. The original mutex
-        approach had the deadlock risk you identified."
-       *updates finding 2's suggested_fix in state*
-```
+- **`[CRITICAL]`** — Bugs, data loss, security vulnerabilities. Must fix.
+- **`[IMPORTANT]`** — Poor error handling, race conditions, perf issues. Should fix.
+- **`[NIT]`** — Style, naming, minor improvements. Won't block.
+- **`[QUESTION]`** — Looks odd, might be intentional. Needs clarification.
 
 ## Configuration
 
-### Environment Variables (CI mode)
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | — | Claude API key |
-| `GITHUB_TOKEN` | Yes | — | GitHub token (auto-provided in Actions) |
-| `MODEL` | No | `claude-sonnet-4-6-20250514` | Claude model to use |
-| `MAX_TOKENS` | No | `8192` | Max response tokens |
-
-### Customization
-
-Edit `.pr-review/agent.md` to customize:
-- Review focus areas (add domain-specific checks)
-- Severity criteria (adjust for your team's standards)
-- Finding lifecycle (add custom statuses)
-- Additional commands
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Claude API key (required) |
+| `MODEL` | `claude-sonnet-4-6-20250514` | Claude model |
+| `MAX_TOKENS` | `8192` | Max response tokens |
+| `GITHUB_TOKEN` | — | GitHub token (CI only) |
 
 ## File Structure
 
 ```
+src/reviewiq/
+  __init__.py               Package init
+  __main__.py               python -m reviewiq support
+  cli.py                    CLI entry point (reviewiq / riq commands)
+  engine.py                 Core review logic (Claude API, state updates)
+  state.py                  State manager (dual backend: local + GitHub)
+  git.py                    Git operations
+  ci.py                     CI mode (GitHub Actions webhook handler)
+  templates/
+    agent.md                Default agent protocol template
 .pr-review/
-  agent.md                    # Review protocol (portable, works in any agent)
-  reviews/                    # State files (gitignored or committed, your choice)
-    pr-42.json                # State for PR #42
-    pr-43.json
-.claude/
-  commands/
-    review-pr.md              # Claude Code slash command
-scripts/
-  state.py                    # State manager (dual backend: local + GitHub)
-  review_agent.py             # Stateful CI agent engine
-  review-agent.sh             # Legacy stateless script (kept for reference)
-.github/
-  workflows/
-    pr-review.yml             # GitHub Actions workflow
+  agent.md                  Review protocol (customize per repo)
+.claude/commands/
+  review-pr.md              Claude Code slash command
+.github/workflows/
+  pr-review.yml             GitHub Actions workflow
 ```
 
-### Git Strategy for State Files
+## License
 
-**Option A — Gitignore** (recommended for most teams):
-```gitignore
-# .gitignore
-.pr-review/reviews/
-```
-State lives in PR comments (CI) or locally (CLI). No repo clutter.
-
-**Option B — Commit** (for teams that want state in version control):
-State files are committed. Useful if you want to track review history in git.
-
-## The Automation Spectrum
-
-```
-Manual            Semi-auto              Fully automated
-----------------------------------------------------------
-Developer runs    CI posts initial       CI posts review +
-/review-pr in     review with state,     auto-applies nit
-their agent       developer interacts    fixes + re-reviews
-of choice         via CLI or comments    
-
-     ◄── start here    grow into ──►
-```
-
-State works identically at every level — same JSON, same lifecycle, same conversation history.
+MIT License. See [LICENSE](LICENSE).
