@@ -31,8 +31,8 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 
 | Surface | How | LLM | API Key? | State |
 |---------|-----|-----|----------|-------|
-| **Claude Code** | Natural language: `review this PR` | Claude Code's own | No | Local JSON |
-| **CLI** | `reviewiq review <branch>` | Claude API | Yes | Local JSON |
+| **Claude Code** | `/review-full <PR>`, `/review-pr <PR>`, or `review this PR` | Claude Code's own | No | Local JSON |
+| **CLI** | `reviewiq review-full <PR>`, `reviewiq review-pr <PR>` | Claude API | Yes (`ANTHROPIC_API_KEY` + `GITHUB_TOKEN`) | Local JSON |
 | **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
 | **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
 
@@ -194,14 +194,14 @@ summarize PR
 ├──────────────┬───────────────────────┬───────────────────────────┤
 │ Input Layer  │   Processing Core     │   Output Layer            │
 ├──────────────┼───────────────────────┼───────────────────────────┤
-│ PR branch    │ Skill Detection       │ Structured findings       │
-│ Git diff     │  ├ File extensions    │ Severity classification   │
-│ Changed files│  ├ Import scanning    │ Concrete code fixes       │
-│ File contents│  └ Domain matching    │ Finding lifecycle         │
-│ PR metadata  │ Review Engine         │ Incremental re-reviews    │
-│ Prior state  │  ├ 4-stage pipeline   │ Conversation history      │
-│ Conversation │  ├ Skill-guided       │ State JSON                │
-│              │  └ LLM (see below)    │ PR comments               │
+│ PR link/branch│ Skill Detection       │ Structured findings       │
+│ Git diff      │  ├ File extensions   │ Inline PR comments        │
+│ Changed files │  ├ Import scanning   │ ```suggestion blocks      │
+│ File contents │  └ Domain matching   │ Finding lifecycle         │
+│ PR metadata   │ Review Engine        │ Incremental re-reviews    │
+│ Prior state   │  ├ 4-stage pipeline  │ Conversation history      │
+│ Conversation  │  ├ Skill-guided      │ State JSON                │
+│               │  └ LLM (see below)   │ Summary + assessment      │
 │              │ State Manager         │                           │
 │              │  ├ Local JSON files   │                           │
 │              │  └ GitHub PR comments │                           │
@@ -237,7 +237,12 @@ All interactions write state to `.pr-review/reviews/`:
 
 ## Review Workflow
 
-The core 4-stage review pipeline with stateful finding tracking.
+Two review modes, same 4-stage pipeline, same skills, same state tracking:
+
+| Mode | Command | Best for |
+|------|---------|----------|
+| **Full (one shot)** | `review-full <PR>` | CI, quick reviews, automation — reviews all files, auto-posts to PR |
+| **Interactive** | `review-pr <PR>` | Deep reviews — file-by-file, explain/fix/post per file |
 
 ### Review Pipeline
 
@@ -451,16 +456,22 @@ Commands map 1:1 between Claude Code and CLI:
 ### Chaining Commands
 
 ```bash
-# Claude Code workflow
-/review-pr feature/payment-retry       # Initial review
-/review-explain 2                      # Deep dive
-/review-fix 1                          # Apply fix
-/review-check feature/payment-retry    # Re-review
-/review-approve                        # Final check
-/review-summarize                      # Merge commit message
+# Claude Code — one shot (fastest)
+/review-full https://github.com/owner/repo/pull/42
 
-# CLI workflow
-reviewiq review feature/payment-retry
+# Claude Code — interactive
+/review-pr https://github.com/owner/repo/pull/42
+/review-explain 2
+/review-fix 1
+/review-check feature/payment-retry
+/review-approve
+/review-summarize
+
+# CLI — one shot
+reviewiq review-full https://github.com/owner/repo/pull/42
+
+# CLI — interactive
+reviewiq review-pr 42 --post
 reviewiq explain 2
 reviewiq retract 3 --note "ORM handles it"
 reviewiq check feature/payment-retry
@@ -502,7 +513,7 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 | `ANTHROPIC_API_KEY` | CLI + CI | — | Claude API key. **Not needed for Claude Code slash commands.** |
 | `MODEL` | CLI + CI | `claude-sonnet-4-6-20250514` | Claude model |
 | `MAX_TOKENS` | CLI + CI | `8192` | Max response tokens |
-| `GITHUB_TOKEN` | CI only | — | GitHub token (auto-provided in Actions) |
+| `GITHUB_TOKEN` | CLI (`review-full`, `review-pr`) + CI | — | GitHub token. Auto-provided in Actions. For CLI: `export GITHUB_TOKEN=ghp_...` |
 
 ---
 
