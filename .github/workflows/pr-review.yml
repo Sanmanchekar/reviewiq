@@ -33,13 +33,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version: "1.22"
 
-      - name: Install ReviewIQ
-        run: pip install .
+      - name: Build ReviewIQ
+        run: go build -o reviewiq ./cmd/reviewiq/
 
       - name: Determine event context
         id: context
@@ -58,7 +58,7 @@ jobs:
           fi
 
       - name: Run ReviewIQ
-        run: reviewiq ci
+        run: ./reviewiq ci
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

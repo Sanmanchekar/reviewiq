@@ -8,7 +8,7 @@
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Sanmanchekar/reviewiq/releases)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.10-brightgreen.svg)](https://python.org)
+[![Go](https://img.shields.io/badge/go-%3E%3D1.22-00ADD8.svg)](https://go.dev)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
@@ -43,18 +43,25 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 ### Install
 
 ```bash
-pip install git+https://github.com/Sanmanchekar/reviewiq.git
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
-Or clone and install locally:
+Or with Go:
+
+```bash
+go install github.com/Sanmanchekar/reviewiq/cmd/reviewiq@latest
+```
+
+Or build from source:
 
 ```bash
 git clone https://github.com/Sanmanchekar/reviewiq.git
 cd reviewiq
-pip install .
+go build -o /usr/local/bin/reviewiq ./cmd/reviewiq/
+ln -s /usr/local/bin/reviewiq /usr/local/bin/riq
 ```
 
-Two entry points: `reviewiq` and `riq` (shorthand).
+Two entry points: `reviewiq` and `riq` (shorthand). Single binary, no runtime dependencies.
 
 ### Usage
 
@@ -480,41 +487,38 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 ## File Structure
 
 ```
-src/reviewiq/
-  __init__.py               Package init + version
-  __main__.py               python -m reviewiq support
-  cli.py                    CLI entry point (reviewiq / riq)
-  engine.py                 Review engine (Claude API, state updates)
-  state.py                  State manager (dual backend: local + GitHub)
-  git.py                    Git operations
-  ci.py                     CI mode (GitHub Actions webhook handler)
-  skills.py                 Skill auto-detection and loading
-  templates/
-    agent.md                Default agent protocol
-    skills/                 16 skill modules (copied on init)
-      commandments.md       40 universal review laws
-      security.md           OWASP-aligned security checks
-      scalability.md        Performance and scaling patterns
-      stability.md          Reliability and observability
-      maintainability.md    Code quality and complexity
-      performance.md        Profiling and optimization
-      languages.md          12 language anti-pattern libraries
-      frameworks.md         14 framework rule sets
-      devops.md             Docker/K8s/Helm/Terraform/CI-CD
-      fintech.md            Payments/lending/insurance/compliance
-      india-regulatory.md   RBI/NBFC/UPI/eKYC/NACH/GST
-      credit-bureau.md      CIBIL/Experian/Equifax integration
-      fraud.md              Fraud detection and prevention
-      notifications.md      SMS/email/push/WhatsApp compliance
-      financial-microservices.md  Saga/outbox/distributed transactions
-      data-privacy.md       DPDP/GDPR/CCPA compliance
+cmd/reviewiq/
+  main.go                   CLI entry point (cobra commands)
+internal/
+  state/state.go            State manager (types, lifecycle, dual backend)
+  engine/engine.go          Review engine (Claude API, structured output)
+  git/git.go                Git operations
+  skills/skills.go          Skill auto-detection and loading
+  ci/ci.go                  CI mode (GitHub Actions webhook handler)
 .pr-review/
   agent.md                  Review protocol (customize per repo)
-  skills/                   Skill modules (customize per repo)
+  skills/                   16 skill modules (customize per repo)
+    commandments.md         40 universal review laws
+    security.md             OWASP-aligned security checks
+    scalability.md          Performance and scaling patterns
+    stability.md            Reliability and observability
+    maintainability.md      Code quality and complexity
+    performance.md          Profiling and optimization
+    languages.md            12 language anti-pattern libraries
+    frameworks.md           14 framework rule sets
+    devops.md               Docker/K8s/Helm/Terraform/CI-CD
+    fintech.md              Payments/lending/insurance/compliance
+    india-regulatory.md     RBI/NBFC/UPI/eKYC/NACH/GST
+    credit-bureau.md        CIBIL/Experian/Equifax integration
+    fraud.md                Fraud detection and prevention
+    notifications.md        SMS/email/push/WhatsApp compliance
+    financial-microservices.md  Saga/outbox/distributed transactions
+    data-privacy.md         DPDP/GDPR/CCPA compliance
 .claude/commands/
   review-pr.md              Claude Code slash command
 .github/workflows/
   pr-review.yml             GitHub Actions workflow
+install.sh                  One-line installer
 ```
 
 ---
@@ -524,8 +528,8 @@ src/reviewiq/
 ```bash
 git clone https://github.com/Sanmanchekar/reviewiq.git
 cd reviewiq
-pip install -e .
-reviewiq --version
+go build -o reviewiq ./cmd/reviewiq/
+./reviewiq --version
 ```
 
 ---

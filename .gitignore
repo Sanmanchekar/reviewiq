@@ -1,17 +1,11 @@
 # ReviewIQ state files
 .pr-review/reviews/
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-*.egg
-.eggs/
+# Go build output
+/reviewiq
+/dist/
+*.exe
 
-# Environments
-.venv/
-venv/
-ENV/
+# OS
+.DS_Store
+Thumbs.db
