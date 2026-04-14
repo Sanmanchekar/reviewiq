@@ -12,10 +12,10 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**16 review skills across 4 surfaces — CLI, CI, AI agents, and GitHub comments — powered by stateful finding tracking.**
+**13 slash commands, 16 review skills, 3 surfaces — Claude Code, CLI, and CI — powered by stateful finding tracking.**
 
 [Quick Start](#quick-start) |
-[Review Workflow](#review-workflow) |
+[Claude Code Commands](#claude-code-commands) |
 [CLI Commands](#cli-commands) |
 [Skills System](#skills-system) |
 [Architecture](#architecture) |
@@ -29,12 +29,12 @@
 
 ReviewIQ is a stateful PR review agent that carries domain expertise as loadable skill modules. Instead of reasoning from scratch, the agent reviews against pre-built expert checklists for your specific stack — security, performance, fintech, DevOps, and more. Findings are tracked objects with lifecycles, conversations carry full history, and incremental reviews diff against known state.
 
-| Surface | How | State |
-|---------|-----|-------|
-| **CLI** | `reviewiq review feature/branch` | Local JSON files |
-| **Claude Code** | `/review-pr feature/branch` | Local JSON files |
-| **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Local JSON files |
-| **GitHub Actions** | Auto on PR open/push/comment | Hidden PR comment |
+| Surface | How | LLM | API Key? | State |
+|---------|-----|-----|----------|-------|
+| **Claude Code** | 13 `/review-*` slash commands | Claude Code's own | No | Local JSON |
+| **CLI** | `reviewiq review <branch>` | Claude API | Yes | Local JSON |
+| **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
+| **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
 
 ---
 
@@ -61,36 +61,114 @@ go build -o /usr/local/bin/reviewiq ./cmd/reviewiq/
 ln -s /usr/local/bin/reviewiq /usr/local/bin/riq
 ```
 
-Two entry points: `reviewiq` and `riq` (shorthand). Single binary, no runtime dependencies.
+### Initialize in Your Repo
+
+```bash
+cd your-project/
+reviewiq init
+```
+
+This creates:
+- `.pr-review/agent.md` — review protocol
+- `.pr-review/skills/` — add domain skill files here
+- `.claude/commands/` — 13 Claude Code slash commands
+- `.gitignore` — updated to exclude state files
 
 ### Usage
 
-**CLI (native terminal):**
+**Claude Code (slash commands — no API key needed):**
 ```bash
-reviewiq init                                    # Initialize skills in your repo
-reviewiq review feature/webhook-retries          # Full review
-reviewiq status                                  # Finding status table
-reviewiq check feature/webhook-retries           # Re-review after fixes
-reviewiq explain 2                               # Deep dive into finding #2
-reviewiq ask "why is this critical?"             # Follow-up question
-reviewiq resolve 1 --note "backoff added"        # Transition finding
-reviewiq approve                                 # Final check
+/review-pr feature/webhook-retries          # Full review
+/review-check feature/webhook-retries       # Re-review after fixes
+/review-explain 2                           # Deep dive into finding #2
+/review-fix 1                               # Apply the suggested fix
+/review-status                              # Finding status table
+/review-ask "why is this critical?"         # Follow-up question
+/review-resolve 1 backoff added             # Mark resolved
+/review-retract 3 ORM handles it            # Retract finding
+/review-approve                             # Final check
 ```
 
-**Claude Code (slash commands):**
+**CLI (native terminal — requires `ANTHROPIC_API_KEY`):**
 ```bash
-/review-pr feature/webhook-retries
-# Then conversationally:
-> "explain finding 2"
-> "fix finding 1"
-> "check"
+export ANTHROPIC_API_KEY=sk-ant-...
+reviewiq review feature/webhook-retries
+reviewiq status
+reviewiq check feature/webhook-retries
+reviewiq explain 2
+reviewiq resolve 1 --note "backoff added"
+reviewiq approve
 ```
 
-**GitHub Actions (automated):**
+**GitHub Actions (automated — requires `ANTHROPIC_API_KEY` secret):**
 ```
 Developer opens PR → Agent posts review automatically
 Developer comments @review-agent why? → Agent replies with context
 Developer pushes fix → Agent re-reviews incrementally
+```
+
+---
+
+## Claude Code Commands
+
+13 slash commands that work inside Claude Code. No API key, no binary — Claude Code is the LLM.
+
+Run `reviewiq init` in your repo to scaffold all commands, then open Claude Code.
+
+### Review Commands
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/review-pr <branch>` | Full 4-stage review with skill loading | `/review-pr feature/payment-retry` |
+| `/review-check <branch>` | Incremental re-review after fixes | `/review-check feature/payment-retry` |
+| `/review-status` | Show all findings with current statuses | `/review-status` |
+
+### Finding Commands
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/review-explain <N>` | Deep dive into finding N with code tracing | `/review-explain 2` |
+| `/review-fix <N>` | Apply the suggested fix, verify, mark resolved | `/review-fix 1` |
+| `/review-ask <question>` | Follow-up question about the review | `/review-ask "why is finding 1 critical?"` |
+
+### Lifecycle Commands
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/review-resolve <N> [note]` | Mark finding as resolved | `/review-resolve 1 backoff added with jitter` |
+| `/review-retract <N> [reason]` | Retract finding (agent was wrong) | `/review-retract 3 ORM handles parameterization` |
+| `/review-wontfix <N> [reason]` | Mark as won't fix (accepted) | `/review-wontfix 2 acceptable risk at our scale` |
+| `/review-approve` | Final check — any blockers remaining? | `/review-approve` |
+
+### Analysis Commands
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/review-impact` | Blast radius analysis | `/review-impact` |
+| `/review-test [N]` | Generate test cases for findings | `/review-test 2` |
+| `/review-summarize` | Generate merge commit summary | `/review-summarize` |
+
+### Typical Flow in Claude Code
+
+```bash
+/review-pr feature/payment-retry
+# Agent reviews, outputs findings with severity
+
+/review-explain 2
+# "The retry logic has no backoff..."
+
+/review-fix 1
+# Agent applies fix directly to the file
+
+# Push fixes, then:
+/review-check feature/payment-retry
+# Agent reports: Finding 1 → resolved, Finding 2 → partial
+
+/review-approve
+# "APPROVE — no remaining blockers. Safe to merge."
+
+/review-summarize
+# Generates merge commit message
 ```
 
 ---
@@ -110,18 +188,16 @@ Developer pushes fix → Agent re-reviews incrementally
 │ PR metadata  │ Review Engine         │ Incremental re-reviews    │
 │ Prior state  │  ├ 4-stage pipeline   │ Conversation history      │
 │ Conversation │  ├ Skill-guided       │ State JSON                │
-│              │  └ Claude API         │ PR comments               │
+│              │  └ LLM (see below)    │ PR comments               │
 │              │ State Manager         │                           │
 │              │  ├ Local JSON files   │                           │
 │              │  └ GitHub PR comments │                           │
 ├──────────────┼───────────────────────┼───────────────────────────┤
-│              │   Review Dimensions   │                           │
-│              │ Correctness ···· ✓    │                           │
-│              │ Security ······ ✓     │                           │
-│              │ Scalability ··· ✓     │                           │
-│              │ Stability ····· ✓     │                           │
-│              │ Maintainability  ✓    │                           │
-│              │ Performance ··· ✓     │                           │
+│              │   Two LLM Modes       │                           │
+│              │ Claude Code: agent's  │                           │
+│              │   own LLM (no key)    │                           │
+│              │ CLI/CI: Claude API    │                           │
+│              │   (needs API key)     │                           │
 └──────────────┴───────────────────────┴───────────────────────────┘
 ```
 
@@ -142,7 +218,7 @@ All interactions write state to `.pr-review/reviews/`:
 - **JSON state files**: Findings, conversation, review rounds, assessment
 - **Finding lifecycle**: `open → resolved | partially_fixed | wontfix | retracted`
 - **Cross-session**: Resume any review from where you left off
-- **Dual backend**: Local files (CLI) + hidden PR comment (CI)
+- **Dual backend**: Local files (CLI/Claude Code) + hidden PR comment (CI)
 
 ---
 
@@ -203,31 +279,15 @@ Summary: 1 resolved, 1 partial, 1 new nit
 Assessment: REQUEST CHANGES → NEEDS DISCUSSION
 ```
 
-### Conversation Continuity
-
-The agent sends full conversation history as multi-turn messages — genuine memory, not reconstructed:
-
-```
-Developer: "finding 2 — won't the lock cause deadlock with line 40?"
-
-Agent: *already has full context from prior turns*
-       "You're right — lock ordering issue. Updating suggested
-        fix to use a buffered channel instead."
-       *updates finding 2's suggested_fix in state*
-
-Developer: "ok, retract finding 3, ORM handles that"
-
-Agent: *transitions finding 3 to retracted*
-       "Retracted — ORM parameterizes by default."
-```
-
 ---
 
 ## CLI Commands
 
+The Go binary for terminal and CI use. Requires `ANTHROPIC_API_KEY`.
+
 | Command | Purpose | State Change |
 |---------|---------|--------------|
-| `reviewiq init` | Initialize `.pr-review/` with skills | Creates skill files |
+| `reviewiq init` | Initialize `.pr-review/` + `.claude/commands/` | Creates all files |
 | `reviewiq review <branch>` | Full 4-stage review | Creates findings (open) |
 | `reviewiq check <branch>` | Incremental re-review | Updates finding statuses |
 | `reviewiq status` | Show finding status table | Read-only |
@@ -238,57 +298,6 @@ Agent: *transitions finding 3 to retracted*
 | `reviewiq wontfix <N>` | Developer won't fix | Finding → wontfix |
 | `reviewiq approve` | Final blocker check | Assessment → APPROVE |
 | `reviewiq ci` | Run in CI mode | Both backends |
-
-### Sample CLI Output
-
-```
-$ reviewiq review feature/payment-retry
-
-Reviewing feature/payment-retry against main...
-[reviewiq] Skills loaded: commandments, security, scalability, stability,
-           maintainability, performance, python, django, fintech
-[reviewiq] Calling Claude with 2 message(s), round 1
-
-### Finding 1: Retry without backoff
-**Severity**: [CRITICAL]
-**File**: `src/webhooks/retry.py:42`
-**Status**: open
-
-**Problem**: Webhook retries fire immediately on failure with no delay.
-During incident recovery, queued webhooks retry simultaneously.
-
-**Impact**: Thundering herd against downstream services. At 500 queued
-webhooks, this is a self-inflicted DDoS.
-
-**Suggested fix**:
-  time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
-
-**Why this fix**: Exponential backoff with jitter and 30s cap.
-
-## Summary
-- 3 files changed, 4 findings (1 critical, 2 important, 1 nit)
-- Overall assessment: REQUEST CHANGES
-- Key risk: thundering herd on webhook retry
-
-State saved: .pr-review/reviews/pr-42917.json
-Findings: 4 (4 open)
-```
-
-```
-$ reviewiq status
-
-ReviewIQ Status — PR #42917 (Round 1)
-Assessment: REQUEST CHANGES
-
-#    Severity     Status           Title                                    File
-----------------------------------------------------------------------------------------------------
-1    CRITICAL     OPEN             Retry without backoff                    src/webhooks/retry.py:42
-2    IMPORTANT    OPEN             Missing idempotency key                  src/webhooks/handler.py:18
-3    IMPORTANT    OPEN             Webhook signature not verified           src/webhooks/verify.py:7
-4    NIT          OPEN             Inconsistent error message format        src/webhooks/retry.py:56
-
-Total: 4 | Open: 4 | Resolved: 0 | Won't fix: 0 | Retracted: 0
-```
 
 ---
 
@@ -350,27 +359,6 @@ PR changes: src/payment/service.py, src/loan/emi.py, Dockerfile
 | **Financial Microservices** | saga, outbox, event_sourcing, kafka | Saga pattern, compensating transactions, transactional outbox, distributed consistency |
 | **Data Privacy** | gdpr, ccpa, dpdp, consent, pii, anonymiz | DPDP Act, GDPR, CCPA, PII detection, encryption, consent management, data deletion |
 
-### Sample: Skill Detection in Action
-
-```
-🔍 SKILL DETECTION: PR #142
-
-┌───────────────────┬──────────────┬──────────────────────────────┐
-│ Category          │ Detected     │ Trigger                      │
-├───────────────────┼──────────────┼──────────────────────────────┤
-│ Always            │ 6 skills     │ (loaded on every review)     │
-│ Language          │ python       │ .py file extensions          │
-│ Framework         │ django       │ `from django.db import`      │
-│ DevOps            │ docker       │ Dockerfile present           │
-│ Domain: fintech   │ ✓            │ `from razorpay import`       │
-│ Domain: fraud     │ ✓            │ risk_engine in filepath      │
-│ Domain: privacy   │ ✓            │ `consent` in imports         │
-└───────────────────┴──────────────┴──────────────────────────────┘
-
-Skills prompt: 8,200 words loaded (vs 14,000 for all skills)
-Token savings: 41%
-```
-
 ### Customization
 
 Skills live in `.pr-review/skills/`. Edit them to add your team's domain rules:
@@ -424,25 +412,42 @@ you get a thundering herd. At your volume, a simple 2s fixed delay suffices.
 
 ## Command Cross-Reference
 
-Commands chain naturally across review lifecycle:
+Commands map 1:1 between Claude Code and CLI:
+
+| Action | Claude Code | CLI |
+|--------|-------------|-----|
+| Full review | `/review-pr <branch>` | `reviewiq review <branch>` |
+| Re-review | `/review-check <branch>` | `reviewiq check <branch>` |
+| Status | `/review-status` | `reviewiq status` |
+| Explain | `/review-explain <N>` | `reviewiq explain <N>` |
+| Fix | `/review-fix <N>` | *(not in CLI — agent applies directly)* |
+| Ask | `/review-ask <question>` | `reviewiq ask <question>` |
+| Resolve | `/review-resolve <N> [note]` | `reviewiq resolve <N> --note "..."` |
+| Retract | `/review-retract <N> [reason]` | `reviewiq retract <N> --note "..."` |
+| Won't fix | `/review-wontfix <N> [reason]` | `reviewiq wontfix <N> --note "..."` |
+| Approve | `/review-approve` | `reviewiq approve` |
+| Summarize | `/review-summarize` | *(not in CLI)* |
+| Impact | `/review-impact` | *(not in CLI)* |
+| Test | `/review-test [N]` | *(not in CLI)* |
+| CI mode | *(not applicable)* | `reviewiq ci` |
+
+### Chaining Commands
 
 ```bash
-# Full review lifecycle
-reviewiq review feature/payment-retry       # Initial review
-reviewiq explain 2                          # Deep dive
-reviewiq ask "what about using channels?"   # Alternative discussion
-reviewiq retract 3 --note "ORM handles it"  # Retract finding
-# developer pushes fixes
-reviewiq check feature/payment-retry        # Incremental re-review
-reviewiq approve                            # Final check
+# Claude Code workflow
+/review-pr feature/payment-retry       # Initial review
+/review-explain 2                      # Deep dive
+/review-fix 1                          # Apply fix
+/review-check feature/payment-retry    # Re-review
+/review-approve                        # Final check
+/review-summarize                      # Merge commit message
 
-# Quick status check
-reviewiq status                             # Table of all findings
-
-# CI lifecycle (automated)
-# PR opened → reviewiq ci (event: opened)
-# Push → reviewiq ci (event: synchronize)
-# Comment → reviewiq ci (event: comment)
+# CLI workflow
+reviewiq review feature/payment-retry
+reviewiq explain 2
+reviewiq retract 3 --note "ORM handles it"
+reviewiq check feature/payment-retry
+reviewiq approve
 ```
 
 ---
@@ -475,12 +480,12 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 
 ## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Claude API key (required) |
-| `MODEL` | `claude-sonnet-4-6-20250514` | Claude model |
-| `MAX_TOKENS` | `8192` | Max response tokens |
-| `GITHUB_TOKEN` | — | GitHub token (CI only, auto-provided in Actions) |
+| Variable | Required for | Default | Description |
+|----------|-------------|---------|-------------|
+| `ANTHROPIC_API_KEY` | CLI + CI | — | Claude API key. **Not needed for Claude Code slash commands.** |
+| `MODEL` | CLI + CI | `claude-sonnet-4-6-20250514` | Claude model |
+| `MAX_TOKENS` | CLI + CI | `8192` | Max response tokens |
+| `GITHUB_TOKEN` | CI only | — | GitHub token (auto-provided in Actions) |
 
 ---
 
@@ -488,39 +493,51 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 
 ```
 cmd/reviewiq/
-  main.go                   CLI entry point (cobra commands)
+  main.go                       CLI entry point (cobra commands)
 internal/
-  state/state.go            State manager (types, lifecycle, dual backend)
-  engine/engine.go          Review engine (Claude API, structured output)
-  git/git.go                Git operations
-  skills/skills.go          Skill auto-detection and loading
-  ci/ci.go                  CI mode (GitHub Actions webhook handler)
+  state/state.go                State manager (types, lifecycle, dual backend)
+  engine/engine.go              Review engine (Claude API, structured output)
+  git/git.go                    Git operations
+  skills/skills.go              Skill auto-detection and loading
+  ci/ci.go                      CI mode (GitHub Actions webhook handler)
 .pr-review/
-  agent.md                  Review protocol (customize per repo)
-  skills/                   16 skill modules (customize per repo)
-    commandments.md         40 universal review laws
-    security.md             OWASP-aligned security checks
-    scalability.md          Performance and scaling patterns
-    stability.md            Reliability and observability
-    maintainability.md      Code quality and complexity
-    performance.md          Profiling and optimization
-    languages.md            12 language anti-pattern libraries
-    frameworks.md           14 framework rule sets
-    devops.md               Docker/K8s/Helm/Terraform/CI-CD
-    fintech.md              Payments/lending/insurance/compliance
-    india-regulatory.md     RBI/NBFC/UPI/eKYC/NACH/GST
-    credit-bureau.md        CIBIL/Experian/Equifax integration
-    fraud.md                Fraud detection and prevention
-    notifications.md        SMS/email/push/WhatsApp compliance
+  agent.md                      Review protocol (customize per repo)
+  skills/                       16 skill modules (customize per repo)
+    commandments.md             40 universal review laws
+    security.md                 OWASP-aligned security checks
+    scalability.md              Performance and scaling patterns
+    stability.md                Reliability and observability
+    maintainability.md          Code quality and complexity
+    performance.md              Profiling and optimization
+    languages.md                12 language anti-pattern libraries
+    frameworks.md               14 framework rule sets
+    devops.md                   Docker/K8s/Helm/Terraform/CI-CD
+    fintech.md                  Payments/lending/insurance/compliance
+    india-regulatory.md         RBI/NBFC/UPI/eKYC/NACH/GST
+    credit-bureau.md            CIBIL/Experian/Equifax integration
+    fraud.md                    Fraud detection and prevention
+    notifications.md            SMS/email/push/WhatsApp compliance
     financial-microservices.md  Saga/outbox/distributed transactions
-    data-privacy.md         DPDP/GDPR/CCPA compliance
-.claude/commands/
-  review-pr.md              Claude Code slash command
+    data-privacy.md             DPDP/GDPR/CCPA compliance
+.claude/commands/               13 Claude Code slash commands
+  review-pr.md                  /review-pr <branch>
+  review-check.md               /review-check <branch>
+  review-explain.md             /review-explain <N>
+  review-fix.md                 /review-fix <N>
+  review-status.md              /review-status
+  review-ask.md                 /review-ask <question>
+  review-resolve.md             /review-resolve <N> [note]
+  review-retract.md             /review-retract <N> [reason]
+  review-wontfix.md             /review-wontfix <N> [reason]
+  review-approve.md             /review-approve
+  review-summarize.md           /review-summarize
+  review-impact.md              /review-impact
+  review-test.md                /review-test [N]
 .github/workflows/
-  pr-review.yml             GitHub Actions workflow
-go.mod                      Go module definition
-go.sum                      Dependency checksums
-install.sh                  One-line installer
+  pr-review.yml                 GitHub Actions workflow
+go.mod                          Go module definition
+go.sum                          Dependency checksums
+install.sh                      One-line installer
 ```
 
 ---
