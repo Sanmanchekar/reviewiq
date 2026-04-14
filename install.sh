@@ -109,9 +109,12 @@ install_binary() {
     mkdir -p "$SKILLS_DIR"
     cp "$tmp/reviewiq/.pr-review/skills/"*.md "$SKILLS_DIR/" 2>/dev/null || true
 
-    # Copy agent.md to global location
+    # Copy agent.md and REVIEWIQ.md to global location
     mkdir -p "$HOME/.reviewiq"
     cp "$tmp/reviewiq/.pr-review/agent.md" "$HOME/.reviewiq/agent.md" 2>/dev/null || true
+
+    # Save REVIEWIQ.md for Claude Code config step
+    cp "$tmp/reviewiq/REVIEWIQ.md" "$tmp/REVIEWIQ.md" 2>/dev/null || true
 
     cd - >/dev/null
     info "Binary installed to $INSTALL_DIR/$BINARY"
@@ -146,7 +149,12 @@ install_claude_config() {
 
     mkdir -p "$CLAUDE_DIR"
 
-    # Write REVIEWIQ.md
+    # Copy REVIEWIQ.md from cloned repo (or write default)
+    local tmp_reviewiq="/tmp/REVIEWIQ.md"
+    if [[ -f "$tmp_reviewiq" ]]; then
+        cp "$tmp_reviewiq" "$CLAUDE_DIR/REVIEWIQ.md"
+        info "Installed ~/.claude/REVIEWIQ.md (from repo)"
+    else
     cat > "$CLAUDE_DIR/REVIEWIQ.md" << 'REVIEWIQ_EOF'
 # ReviewIQ — Global PR Review Agent
 
@@ -305,8 +313,8 @@ Every transition: update status, append to status_history with timestamp + note,
 7. Cross-file awareness — check if changes break assumptions elsewhere
 8. State is truth — always load before acting, save after
 REVIEWIQ_EOF
-
-    info "Installed ~/.claude/REVIEWIQ.md"
+    info "Installed ~/.claude/REVIEWIQ.md (default)"
+    fi
 
     # Add @REVIEWIQ.md to CLAUDE.md if not already there
     local claude_md="$CLAUDE_DIR/CLAUDE.md"

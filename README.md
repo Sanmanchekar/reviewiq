@@ -77,29 +77,38 @@ The installer sets up everything globally — binary, skills (`~/.reviewiq/skill
 
 **Claude Code (just talk naturally — no API key needed):**
 ```bash
-cd your-project/
-git checkout feature/webhook-retries
+# Review a PR by link (file-by-file, posts inline comments)
+review-pr https://github.com/owner/repo/pull/42
 
-# In Claude Code:
+# Or review current branch
 review this PR                              # auto-detects: current branch → main
-review this PR to develop                   # explicit: current branch → develop
+review this PR to develop                   # explicit target branch
 
 # After review, continue naturally:
+next                                        # move to next file
 explain finding 2                           # deep dive
 fix finding 1                               # applies the fix
+post                                        # post findings as PR inline comments
 check review                                # re-review after pushing fixes
-retract 3 ORM handles it                    # retract a finding
 approve                                     # final check
 ```
 
-**CLI (native terminal — requires `ANTHROPIC_API_KEY`):**
+**CLI (native terminal — requires `ANTHROPIC_API_KEY` + `GITHUB_TOKEN`):**
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
+export GITHUB_TOKEN=ghp_...
+
+# Review PR by link — file by file
+reviewiq review-pr https://github.com/owner/repo/pull/42
+reviewiq review-pr 42                       # if inside the repo
+
+# Post findings as inline PR comments with suggestion blocks
+reviewiq review-pr 42 --post
+
+# Branch-based review (no PR link needed)
 reviewiq review feature/webhook-retries
 reviewiq status
 reviewiq check feature/webhook-retries
-reviewiq explain 2
-reviewiq resolve 1 --note "backoff added"
 reviewiq approve
 ```
 

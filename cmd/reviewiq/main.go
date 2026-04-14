@@ -16,6 +16,8 @@ import (
 	"github.com/Sanmanchekar/reviewiq/internal/ci"
 	"github.com/Sanmanchekar/reviewiq/internal/engine"
 	gitops "github.com/Sanmanchekar/reviewiq/internal/git"
+	gh "github.com/Sanmanchekar/reviewiq/internal/github"
+	"github.com/Sanmanchekar/reviewiq/internal/skills"
 	"github.com/Sanmanchekar/reviewiq/internal/state"
 )
 
@@ -28,7 +30,7 @@ func main() {
 		Version: version,
 	}
 
-	root.AddCommand(initCmd(), reviewCmd(), checkCmd(), statusCmd(),
+	root.AddCommand(initCmd(), reviewCmd(), reviewPRCmd(), checkCmd(), statusCmd(),
 		explainCmd(), askCmd(), resolveCmd(), retractCmd(), wontfixCmd(),
 		approveCmd(), ciCmd())
 
@@ -618,6 +620,260 @@ func ciCmd() *cobra.Command {
 			ci.Run(repo, prNumber, eventType, commentBody)
 		},
 	}
+}
+
+func reviewPRCmd() *cobra.Command {
+	var post bool
+	cmd := &cobra.Command{
+		Use:   "review-pr <pr-link-or-number>",
+		Short: "Review a GitHub PR file-by-file with inline comments",
+		Long: `Review a GitHub PR by fetching diffs from the GitHub API,
+reviewing each file against relevant skills, and posting
+inline comments with suggestion blocks on the PR.
+
+Examples:
+  reviewiq review-pr https://github.com/owner/repo/pull/42
+  reviewiq review-pr 42  (if inside the repo)`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			input := args[0]
+
+			// Parse PR link or number
+			var owner, repo string
+			var prNumber int
+
+			if strings.Contains(input, "github.com") {
+				var err error
+				owner, repo, prNumber, err = gh.ParsePRLink(input)
+				if err != nil {
+					color.Red("%s", err)
+					os.Exit(1)
+				}
+			} else {
+				prNumber, _ = strconv.Atoi(input)
+				if prNumber == 0 {
+					color.Red("Invalid input. Provide a PR link or number.")
+					os.Exit(1)
+				}
+				// Detect owner/repo from git remote
+				remote := gitops.Run("remote", "get-url", "origin")
+				re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
+				m := re.FindStringSubmatch(remote)
+				if m == nil {
+					color.Red("Cannot detect GitHub repo from remote. Use full PR link.")
+					os.Exit(1)
+				}
+				owner, repo = m[1], m[2]
+			}
+
+			bold := color.New(color.Bold)
+			cyan := color.New(color.FgCyan)
+
+			// Fetch PR info
+			step := color.New(color.FgCyan)
+			step.Printf("[reviewiq] Fetching PR #%d from %s/%s...\n", prNumber, owner, repo)
+
+			prInfo, err := gh.GetPR(owner, repo, prNumber)
+			if err != nil {
+				color.Red("Failed to fetch PR: %s", err)
+				os.Exit(1)
+			}
+
+			files, err := gh.GetPRFiles(owner, repo, prNumber)
+			if err != nil {
+				color.Red("Failed to fetch PR files: %s", err)
+				os.Exit(1)
+			}
+
+			// Show PR overview
+			fmt.Println()
+			bold.Printf("PR #%d: %s\n", prNumber, prInfo.Title)
+			fmt.Printf("Author: @%s\n", prInfo.Author)
+			fmt.Printf("Branch: %s → %s\n", prInfo.HeadBranch, prInfo.BaseBranch)
+			fmt.Printf("Changed files (%d):\n", len(files))
+			for i, f := range files {
+				fmt.Printf("  %d. %-45s (+%d, -%d)\n", i+1, f.Filename, f.Additions, f.Deletions)
+			}
+			fmt.Println()
+
+			// Load state
+			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo), "auto")
+			s.PR.Title = prInfo.Title
+			s.PR.Author = prInfo.Author
+			s.PR.BaseBranch = prInfo.BaseBranch
+			s.PR.HeadBranch = prInfo.HeadBranch
+			s.PR.Repo = fmt.Sprintf("%s/%s", owner, repo)
+
+			round := len(s.ReviewRounds) + 1
+			var allFileNames []string
+			for _, f := range files {
+				allFileNames = append(allFileNames, f.Filename)
+			}
+			s.ReviewRounds = append(s.ReviewRounds, state.NewReviewRound(
+				round, prInfo.HeadSHA, prInfo.BaseSHA, "review-pr", allFileNames,
+			))
+			s.Summary.LastReviewedSHA = prInfo.HeadSHA
+
+			findingCounter := len(s.Findings)
+			var allComments []gh.InlineComment
+
+			// Review file by file
+			for i, file := range files {
+				if file.Patch == "" {
+					continue // binary or empty
+				}
+
+				cyan.Printf("\n[reviewiq] Reviewing file %d/%d: %s\n", i+1, len(files), file.Filename)
+
+				// Detect skills for THIS file only
+				detected := skills.Detect([]string{file.Filename}, file.Patch)
+				skillPrompt := skills.LoadSkills(detected)
+
+				var loadedSkills []string
+				loadedSkills = append(loadedSkills, detected.Always...)
+				loadedSkills = append(loadedSkills, detected.Languages...)
+				loadedSkills = append(loadedSkills, detected.Frameworks...)
+				loadedSkills = append(loadedSkills, detected.DevOps...)
+				loadedSkills = append(loadedSkills, detected.Domains...)
+				fmt.Printf("  Skills: %s\n", strings.Join(loadedSkills, ", "))
+
+				// Get full file content from GitHub
+				fullContent, _ := gh.GetFileContent(owner, repo, prInfo.HeadSHA, file.Filename)
+
+				// Build prompt for single file review
+				sysPrompt := engine.ReadSystemPrompt([]string{file.Filename}, file.Patch)
+				if skillPrompt != "" {
+					sysPrompt += "\n\n" + skillPrompt
+				}
+				sysPrompt += engine.StructuredOutputInstruction
+
+				userPrompt := fmt.Sprintf(`Review ONLY this single file from PR #%d.
+
+## File: %s (+%d, -%d)
+
+### Diff:
+`+"```diff"+`
+%s
+`+"```"+`
+
+### Full File Content:
+`+"```"+`
+%s
+`+"```"+`
+
+Review against loaded skills. For each finding:
+1. Identify the exact line number in the NEW version of the file
+2. Classify severity: CRITICAL / IMPORTANT / NIT / QUESTION
+3. Provide a concrete fix as a code suggestion (the exact replacement code for the problematic lines)
+
+Keep it focused — this is one file, not the whole PR.`,
+					prNumber, file.Filename, file.Additions, file.Deletions,
+					file.Patch, fullContent)
+
+				s.AddMessage("developer", userPrompt, round, nil)
+				messages := s.GetConversationForLLM()
+
+				// Only send last 2 messages to keep tokens low (per-file review)
+				if len(messages) > 2 {
+					messages = messages[len(messages)-2:]
+				}
+
+				response, err := engine.CallClaude(sysPrompt, messages)
+				if err != nil {
+					color.Red("  Review failed: %s", err)
+					continue
+				}
+
+				// Parse findings
+				humanResponse := engine.ParseStructuredOutput(response, s, round)
+				s.AddMessage("agent", humanResponse, round, nil)
+
+				// Count new findings for this file
+				newFindings := 0
+				for fid, f := range s.Findings {
+					id, _ := strconv.Atoi(fid)
+					if id > findingCounter {
+						newFindings++
+						// Build inline comment
+						comment := gh.InlineComment{
+							Path: file.Filename,
+							Line: f.Line,
+							Body: gh.FormatSuggestion(f.Severity, f.Title, f.Problem, f.SuggestedFix, f.FixRationale),
+						}
+						allComments = append(allComments, comment)
+					}
+				}
+				findingCounter = len(s.Findings)
+
+				// Print findings for this file
+				fmt.Println(humanResponse)
+				if newFindings > 0 {
+					fmt.Printf("\n  Found: %d finding(s) for %s\n", newFindings, file.Filename)
+				} else {
+					color.Green("  No findings for %s\n", file.Filename)
+				}
+
+				// Save state after each file
+				state.Save(s, "local")
+			}
+
+			// Post to PR if --post flag
+			if post && len(allComments) > 0 {
+				step.Println("\n[reviewiq] Posting review to PR...")
+
+				summary := fmt.Sprintf("## ReviewIQ Review\n\n"+
+					"**%d findings** across %d files | Assessment: **%s**\n\n"+
+					"| Severity | Count |\n|---|---|\n"+
+					"| CRITICAL | %d |\n| IMPORTANT | %d |\n| NIT | %d |",
+					s.Summary.TotalFindings, len(files), s.Summary.Assessment,
+					countBySeverity(s, "CRITICAL"),
+					countBySeverity(s, "IMPORTANT"),
+					countBySeverity(s, "NIT"))
+
+				event := "COMMENT"
+				if s.Summary.Open > 0 {
+					event = "REQUEST_CHANGES"
+				}
+
+				if err := gh.PostReview(owner, repo, prNumber, prInfo.HeadSHA, summary, event, allComments); err != nil {
+					color.Red("Failed to post review: %s", err)
+					// Fall back to posting as regular comment
+					if err2 := gh.PostPRComment(owner, repo, prNumber, summary+"\n\n_(inline comments failed, findings in state file)_"); err2 != nil {
+						color.Red("Fallback comment also failed: %s", err2)
+					}
+				} else {
+					color.Green("Review posted to PR #%d with %d inline comments", prNumber, len(allComments))
+				}
+			} else if post {
+				color.Green("No findings to post.")
+			}
+
+			// Final summary
+			fmt.Println()
+			bold.Println("Review Complete")
+			fmt.Printf("Total: %d findings | Open: %d | Assessment: %s\n",
+				s.Summary.TotalFindings, s.Summary.Open, s.Summary.Assessment)
+			fmt.Printf("State: .pr-review/reviews/pr-%d.json\n", prNumber)
+
+			if !post && len(allComments) > 0 {
+				fmt.Printf("\nTo post findings to PR: reviewiq review-pr %s --post\n", input)
+			}
+
+			state.Save(s, "local")
+		},
+	}
+	cmd.Flags().BoolVar(&post, "post", false, "Post findings as inline comments on the PR")
+	return cmd
+}
+
+func countBySeverity(s *state.ReviewState, severity string) int {
+	count := 0
+	for _, f := range s.Findings {
+		if f.Severity == severity && (f.Status == "open" || f.Status == "partially_fixed") {
+			count++
+		}
+	}
+	return count
 }
 
 const defaultAgentMD = `# PR Review Agent
