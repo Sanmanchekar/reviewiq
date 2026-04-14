@@ -169,6 +169,8 @@ ReviewIQ auto-detects languages, frameworks, and infrastructure from the PR's ch
 | **Security** | Injection (SQL/XSS/SSRF/command), auth, crypto, data protection, infra security, dependency security, OWASP-aligned |
 | **Scalability** | Database (N+1, indexes, pagination), caching (stampede, invalidation), concurrency, network, compute, architecture |
 | **Stability** | Error handling, resilience patterns (circuit breakers, bulkheads, retries), state management, deployment safety, observability |
+| **Maintainability** | Complexity limits, naming conventions, code organization, dependency management, testability, refactoring signals |
+| **Performance** | Algorithmic complexity, memory leaks, database optimization, network/IO, CPU profiling, frontend performance, caching strategy |
 
 ### Auto-Detected (loaded when relevant files are found)
 
@@ -177,6 +179,7 @@ ReviewIQ auto-detects languages, frameworks, and infrastructure from the PR's ch
 | **Languages** | `.py`, `.java`, `.go`, `.ts`, `.cpp`, `.rs`, `.cs`, `.rb`, `.php`, `.sh`, `.cob` | Language-specific anti-patterns, performance traps, concurrency pitfalls, type safety |
 | **Frameworks** | imports/files for Django, FastAPI, Flask, Spring, React, Next.js, Express, NestJS, Vue, Angular, Rails, .NET | Framework-specific rules, common mistakes, security configs |
 | **DevOps** | `Dockerfile`, `Chart.yaml`, `*.tf`, `*.yml` (K8s), CI configs | Docker, Kubernetes, Helm, Terraform, CI/CD, Ansible review checklists |
+| **Fintech** | imports/filenames: stripe, razorpay, payment, loan, emi, insurance, policy, ledger, kyc | Payments, PCI-DSS, loan management (EMI/APR/amortization), insurance (claims/underwriting), personal loans, ledger/accounting, KYC/AML, regulatory compliance |
 
 ### How It Works
 
@@ -246,9 +249,12 @@ src/reviewiq/
       security.md           OWASP-aligned security checks
       scalability.md        Performance and scaling patterns
       stability.md          Reliability and observability
+      maintainability.md    Code quality and complexity
+      performance.md        Profiling and optimization
       languages.md          Language-specific anti-patterns
       frameworks.md         Framework-specific rules
       devops.md             Docker/K8s/Helm/Terraform/CI-CD
+      fintech.md            Payments/lending/insurance/compliance
   skills.py                 Skill auto-detection and loading
 .pr-review/
   agent.md                  Review protocol (customize per repo)

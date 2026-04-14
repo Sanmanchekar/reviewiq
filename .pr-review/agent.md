@@ -283,11 +283,14 @@ ReviewIQ auto-detects languages, frameworks, and infrastructure from the changed
 - `security.md` — OWASP-aligned checks: injection, auth, crypto, data protection, infra security, dependency security
 - `scalability.md` — Database, caching, concurrency, network, compute, architecture patterns that break under load
 - `stability.md` — Error handling, resilience patterns, state management, deployment safety, observability
+- `maintainability.md` — Complexity limits, naming, code organization, dependencies, testability, refactoring signals
+- `performance.md` — Algorithmic complexity, memory, database, network/IO, CPU, frontend, caching, concurrency performance
 
-**Conditionally loaded** (based on file types):
+**Conditionally loaded** (based on file types and imports):
 - `languages.md` — Python, Java, Go, TypeScript, C++, Rust, C#, Ruby, PHP, Shell, Legacy (COBOL/Fortran) anti-patterns
 - `frameworks.md` — Django, FastAPI, Flask, Spring, React, Next.js, Express, NestJS, Vue, Angular, Rails, .NET rules
 - `devops.md` — Docker, Kubernetes, Helm, Terraform, CI/CD, Ansible review checklists
+- `fintech.md` — Payments, PCI-DSS, loan management, insurance, personal loans, ledger/accounting, KYC/AML, regulatory compliance
 
 **How to use**: When reviewing, check the loaded skills for applicable anti-patterns. If a skill lists something as CRITICAL, flag it as CRITICAL. Use the skill checklists as your review guide — they are pre-built expert knowledge.
 

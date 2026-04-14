@@ -128,7 +128,32 @@ DEVOPS_INDICATORS = {
 
 # ── Always-loaded skills ─────────────────────────────────────────────────────
 
-ALWAYS_LOAD = ["commandments", "security", "scalability", "stability"]
+ALWAYS_LOAD = ["commandments", "security", "scalability", "stability", "maintainability", "performance"]
+
+FINTECH_INDICATORS = {
+    "imports": [
+        "stripe", "razorpay", "paypal", "braintree", "adyen", "square",
+        "plaid", "dwolla", "paytm", "phonepe", "cashfree", "payu",
+        "payment", "checkout", "billing", "invoice", "subscription",
+        "ledger", "accounting", "journal_entry", "double_entry",
+        "loan", "emi", "amortization", "disbursement", "repayment",
+        "interest_rate", "apr", "prepayment", "moratorium",
+        "insurance", "policy", "premium", "claim", "underwriting",
+        "coverage", "endorsement", "actuary",
+        "kyc", "aml", "pci", "compliance", "sanctions",
+        "bank_account", "ifsc", "iban", "swift", "ach", "nach",
+        "credit_score", "bureau", "cibil", "experian", "equifax",
+        "wallet", "upi", "neft", "rtgs", "imps",
+    ],
+    "files": [
+        "payment", "checkout", "billing", "invoice", "subscription",
+        "loan", "emi", "lending", "disburs", "repay", "collect",
+        "insurance", "policy", "claim", "premium", "underwrit",
+        "ledger", "journal", "accounting", "reconcil",
+        "kyc", "aml", "compliance", "sanction",
+        "wallet", "transfer", "payout", "refund", "settlement",
+    ],
+}
 
 
 # ── Detection Engine ─────────────────────────────────────────────────────────
@@ -149,6 +174,7 @@ def detect_skills(changed_files: list[str], file_contents: str = "") -> dict:
         "languages": set(),
         "frameworks": set(),
         "devops": set(),
+        "fintech": False,
         "always": ALWAYS_LOAD,
     }
 
@@ -194,6 +220,21 @@ def detect_skills(changed_files: list[str], file_contents: str = "") -> dict:
         for pattern in k8s_indicators.get("content_patterns", []):
             if pattern.lower() in content_lower:
                 result["devops"].add("kubernetes")
+
+    # Fintech detection (content-based)
+    if file_contents:
+        for pattern in FINTECH_INDICATORS["imports"]:
+            if pattern.lower() in content_lower:
+                result["fintech"] = True
+                break
+    if not result["fintech"]:
+        for pattern in FINTECH_INDICATORS["files"]:
+            for filepath in changed_files:
+                if pattern.lower() in filepath.lower():
+                    result["fintech"] = True
+                    break
+            if result["fintech"]:
+                break
 
     # Convert sets to sorted lists for deterministic ordering
     result["languages"] = sorted(result["languages"])
@@ -265,6 +306,12 @@ def load_skills(detected: dict) -> str:
             if relevant:
                 sections.append(f"# DevOps Review Rules\n\n{relevant}")
 
+    # Fintech skills
+    if detected.get("fintech"):
+        content = _load_skill_file("fintech")
+        if content:
+            sections.append(content)
+
     if not sections:
         return ""
 
@@ -274,6 +321,8 @@ def load_skills(detected: dict) -> str:
     skills_loaded.extend(detected["languages"])
     skills_loaded.extend(detected["frameworks"])
     skills_loaded.extend(detected["devops"])
+    if detected.get("fintech"):
+        skills_loaded.append("fintech")
 
     header += f"**Skills loaded**: {', '.join(skills_loaded)}\n\n"
     return header + "\n\n---\n\n".join(sections)
