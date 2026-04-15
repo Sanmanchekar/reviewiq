@@ -1,7 +1,7 @@
 Mark finding as won't fix: $ARGUMENTS
 
 Format: `<finding-id> [reason]`
-Example: `/review-wontfix 2 acceptable risk at our scale`
+Example: `/reviewiq-wontfix 2 acceptable risk at our scale`
 
 ## Steps
 

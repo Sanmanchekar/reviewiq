@@ -1,7 +1,7 @@
 Mark finding as resolved: $ARGUMENTS
 
 Format: `<finding-id> [note]`
-Example: `/review-resolve 1 backoff added with jitter`
+Example: `/reviewiq-resolve 1 backoff added with jitter`
 
 ## Steps
 

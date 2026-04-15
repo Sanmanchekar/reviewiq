@@ -31,7 +31,7 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 
 | Surface | How | LLM | API Key? | State |
 |---------|-----|-----|----------|-------|
-| **Claude Code** | `/review-full <PR>`, `/review-pr <PR>`, or `review this PR` | Claude Code's own | No | Local JSON |
+| **Claude Code** | `/reviewiq-full <PR>`, `/reviewiq-pr <PR>`, or `review this PR` | Claude Code's own | No | Local JSON |
 | **CLI** | `reviewiq review-full <PR>`, `reviewiq review-pr <PR>` | Claude API | Yes (`ANTHROPIC_API_KEY` + `GITHUB_TOKEN`) | Local JSON |
 | **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
 | **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
@@ -78,7 +78,7 @@ The installer sets up everything globally — binary, skills (`~/.reviewiq/skill
 **Claude Code (just talk naturally — no API key needed):**
 ```bash
 # Full PR review — one shot, posts everything to PR
-/review-full https://github.com/owner/repo/pull/42
+/reviewiq-full https://github.com/owner/repo/pull/42
 
 # File-by-file interactive review
 /review-pr https://github.com/owner/repo/pull/42
@@ -135,8 +135,8 @@ Works globally in Claude Code — just talk naturally. The installer sets up `~/
 
 | What you say | What happens |
 |-------------|--------------|
-| `/review-full <PR-link>` | Full review, all files at once, auto-posts comments + suggestions to PR |
-| `/review-pr <PR-link>` | File-by-file interactive review with inline PR comments |
+| `/reviewiq-full <PR-link>` | Full review, all files at once, auto-posts comments + suggestions to PR |
+| `/reviewiq-pr <PR-link>` | File-by-file interactive review with inline PR comments |
 | `review this PR` | Full 4-stage review (auto-detects current branch → main) |
 | `review this PR to develop` | Review current branch against develop |
 | `check review` / `re-review` | Incremental re-review after pushing fixes |
@@ -153,9 +153,9 @@ Works globally in Claude Code — just talk naturally. The installer sets up `~/
 
 ### Slash Commands (also available)
 
-If you run `reviewiq init` in a repo, 14 `/review-*` slash commands are also created:
+If you run `reviewiq init` in a repo, 14 `/reviewiq-*` slash commands are also created:
 
-`/review-full`, `/review-pr`, `/review-check`, `/review-explain`, `/review-fix`, `/review-status`, `/review-ask`, `/review-resolve`, `/review-retract`, `/review-wontfix`, `/review-approve`, `/review-summarize`, `/review-impact`, `/review-test`
+`/reviewiq-full`, `/reviewiq-pr`, `/reviewiq-check`, `/reviewiq-explain`, `/reviewiq-fix`, `/reviewiq-status`, `/reviewiq-ask`, `/reviewiq-resolve`, `/reviewiq-retract`, `/reviewiq-wontfix`, `/reviewiq-approve`, `/reviewiq-summarize`, `/reviewiq-impact`, `/reviewiq-test`
 
 ### Typical Flow
 
@@ -436,36 +436,36 @@ Commands map 1:1 between Claude Code and CLI:
 
 | Action | Claude Code | CLI |
 |--------|-------------|-----|
-| Full PR review (one shot) | `/review-full <PR-link>` | `reviewiq review-full <PR-link>` |
-| File-by-file PR review | `/review-pr <PR-link>` | `reviewiq review-pr <PR-link> --post` |
+| Full PR review (one shot) | `/reviewiq-full <PR-link>` | `reviewiq review-full <PR-link>` |
+| File-by-file PR review | `/reviewiq-pr <PR-link>` | `reviewiq review-pr <PR-link> --post` |
 | Branch review (local) | `review this PR` | `reviewiq review <branch>` |
-| Re-review | `/review-check <branch>` | `reviewiq check <branch>` |
-| Status | `/review-status` | `reviewiq status` |
-| Explain | `/review-explain <N>` | `reviewiq explain <N>` |
-| Fix | `/review-fix <N>` | *(not in CLI — agent applies directly)* |
-| Ask | `/review-ask <question>` | `reviewiq ask <question>` |
-| Resolve | `/review-resolve <N> [note]` | `reviewiq resolve <N> --note "..."` |
-| Retract | `/review-retract <N> [reason]` | `reviewiq retract <N> --note "..."` |
-| Won't fix | `/review-wontfix <N> [reason]` | `reviewiq wontfix <N> --note "..."` |
-| Approve | `/review-approve` | `reviewiq approve` |
-| Summarize | `/review-summarize` | *(not in CLI)* |
-| Impact | `/review-impact` | *(not in CLI)* |
-| Test | `/review-test [N]` | *(not in CLI)* |
+| Re-review | `/reviewiq-check <branch>` | `reviewiq check <branch>` |
+| Status | `/reviewiq-status` | `reviewiq status` |
+| Explain | `/reviewiq-explain <N>` | `reviewiq explain <N>` |
+| Fix | `/reviewiq-fix <N>` | *(not in CLI — agent applies directly)* |
+| Ask | `/reviewiq-ask <question>` | `reviewiq ask <question>` |
+| Resolve | `/reviewiq-resolve <N> [note]` | `reviewiq resolve <N> --note "..."` |
+| Retract | `/reviewiq-retract <N> [reason]` | `reviewiq retract <N> --note "..."` |
+| Won't fix | `/reviewiq-wontfix <N> [reason]` | `reviewiq wontfix <N> --note "..."` |
+| Approve | `/reviewiq-approve` | `reviewiq approve` |
+| Summarize | `/reviewiq-summarize` | *(not in CLI)* |
+| Impact | `/reviewiq-impact` | *(not in CLI)* |
+| Test | `/reviewiq-test [N]` | *(not in CLI)* |
 | CI mode | *(not applicable)* | `reviewiq ci` |
 
 ### Chaining Commands
 
 ```bash
 # Claude Code — one shot (fastest)
-/review-full https://github.com/owner/repo/pull/42
+/reviewiq-full https://github.com/owner/repo/pull/42
 
 # Claude Code — interactive
 /review-pr https://github.com/owner/repo/pull/42
-/review-explain 2
-/review-fix 1
-/review-check feature/payment-retry
-/review-approve
-/review-summarize
+/reviewiq-explain 2
+/reviewiq-fix 1
+/reviewiq-check feature/payment-retry
+/reviewiq-approve
+/reviewiq-summarize
 
 # CLI — one shot
 reviewiq review-full https://github.com/owner/repo/pull/42
@@ -564,20 +564,20 @@ internal/
     financial-microservices.md  Saga/outbox/distributed transactions
     data-privacy.md             DPDP/GDPR/CCPA compliance
 .claude/commands/               14 Claude Code slash commands
-  review-full.md                /review-full <PR> — one-shot full review + post
-  review-pr.md                  /review-pr <PR> — file-by-file interactive
-  review-check.md               /review-check <branch>
-  review-explain.md             /review-explain <N>
-  review-fix.md                 /review-fix <N>
-  review-status.md              /review-status
-  review-ask.md                 /review-ask <question>
-  review-resolve.md             /review-resolve <N> [note]
-  review-retract.md             /review-retract <N> [reason]
-  review-wontfix.md             /review-wontfix <N> [reason]
-  review-approve.md             /review-approve
-  review-summarize.md           /review-summarize
-  review-impact.md              /review-impact
-  review-test.md                /review-test [N]
+  reviewiq-full.md                /reviewiq-full <PR> — one-shot full review + post
+  reviewiq-pr.md                  /review-pr <PR> — file-by-file interactive
+  reviewiq-check.md               /reviewiq-check <branch>
+  reviewiq-explain.md             /reviewiq-explain <N>
+  reviewiq-fix.md                 /reviewiq-fix <N>
+  reviewiq-status.md              /reviewiq-status
+  reviewiq-ask.md                 /reviewiq-ask <question>
+  reviewiq-resolve.md             /reviewiq-resolve <N> [note]
+  reviewiq-retract.md             /reviewiq-retract <N> [reason]
+  reviewiq-wontfix.md             /reviewiq-wontfix <N> [reason]
+  reviewiq-approve.md             /reviewiq-approve
+  reviewiq-summarize.md           /reviewiq-summarize
+  reviewiq-impact.md              /reviewiq-impact
+  reviewiq-test.md                /reviewiq-test [N]
 .github/workflows/
   pr-review.yml                 GitHub Actions workflow
 go.mod                          Go module definition

@@ -1,7 +1,7 @@
 Retract finding (agent was wrong): $ARGUMENTS
 
 Format: `<finding-id> [reason]`
-Example: `/review-retract 3 ORM handles parameterization`
+Example: `/reviewiq-retract 3 ORM handles parameterization`
 
 ## Steps
 

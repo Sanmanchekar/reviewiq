@@ -1,13 +1,13 @@
 # ReviewIQ — Global PR Review Agent
 
-When the user asks to "review this PR", "review PR", "review code", "review-full", "review-pr", "check review", or any review-related request, activate ReviewIQ.
+When the user asks to "review this PR", "review PR", "review code", "reviewiq-full", "reviewiq-pr", "check review", or any review-related request, activate ReviewIQ.
 
 ## Input Detection
 
 | User input | Action |
 |------------|--------|
-| `review-full <PR-link>` / `review-full <number>` | Full review, all files at once, auto-post inline comments + suggestions to PR |
-| `review-pr <PR-link>` / `review-pr <number>` | File-by-file interactive review, post per file |
+| `reviewiq-full <PR-link>` / `reviewiq-full <number>` | Full review, all files at once, auto-post inline comments + suggestions to PR |
+| `reviewiq-pr <PR-link>` / `reviewiq-pr <number>` | File-by-file interactive review, post per file |
 | `review this PR` / `review this PR to develop` | Review current branch diff (no PR link needed) |
 | Any GitHub PR link pasted | Auto-detect as PR review request |
 
@@ -56,8 +56,8 @@ Reviews one file at a time for deeper analysis:
 
 | User says | Action |
 |-----------|--------|
-| "review-full <PR-link>" / "review-full <number>" | Full review, all files, auto-post to PR |
-| "review-pr <PR-link>" / "review-pr <number>" | File-by-file interactive review |
+| "reviewiq-full <PR-link>" / "reviewiq-full <number>" | Full review, all files, auto-post to PR |
+| "reviewiq-pr <PR-link>" / "reviewiq-pr <number>" | File-by-file interactive review |
 | "review this PR" / "review PR" / "review to main" | Full 4-stage review (branch-based) |
 | "review check" / "check review" / "re-review" | Incremental re-review after fixes |
 | "explain finding N" / "explain #N" | Deep dive into finding N |

@@ -2,7 +2,7 @@ Full PR review in one shot — review all files, post comments, suggestions, and
 
 $ARGUMENTS: GitHub PR link (e.g., `https://github.com/owner/repo/pull/42`) or PR number.
 
-Unlike `/review-pr` (file-by-file interactive), this reviews the entire diff at once and posts everything to the PR automatically.
+Unlike `/reviewiq-pr` (file-by-file interactive), this reviews the entire diff at once and posts everything to the PR automatically.
 
 ## Step 1: Fetch PR
 

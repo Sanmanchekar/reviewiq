@@ -144,9 +144,9 @@ func initCmd() *cobra.Command {
 			fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			fmt.Println()
 			fmt.Println("  Claude Code commands (14):")
-			cmds := []string{"review-full", "review-pr", "review-check", "review-explain", "review-fix",
-				"review-status", "review-ask", "review-retract", "review-wontfix",
-				"review-resolve", "review-approve", "review-summarize", "review-impact", "review-test"}
+			cmds := []string{"reviewiq-full", "reviewiq-pr", "reviewiq-check", "reviewiq-explain", "reviewiq-fix",
+				"reviewiq-status", "reviewiq-ask", "reviewiq-retract", "reviewiq-wontfix",
+				"reviewiq-resolve", "reviewiq-approve", "reviewiq-summarize", "reviewiq-impact", "reviewiq-test"}
 			for _, c := range cmds {
 				if _, ok := claudeCommands[c]; ok {
 					fmt.Printf("    /%-24s .claude/commands/%s.md\n", c, c)
@@ -154,8 +154,8 @@ func initCmd() *cobra.Command {
 			}
 			fmt.Println()
 			fmt.Println("Usage:")
-			fmt.Println("  Claude Code: /review-full <PR-link>   (one-shot, auto-posts)")
-			fmt.Println("               /review-pr <PR-link>     (file-by-file)")
+			fmt.Println("  Claude Code: /reviewiq-full <PR-link>   (one-shot, auto-posts)")
+			fmt.Println("               /reviewiq-pr <PR-link>     (file-by-file)")
 			fmt.Println("  CLI:         reviewiq review-full <PR-link>")
 			fmt.Println("               reviewiq review-pr <PR-link> --post")
 		},
@@ -163,7 +163,7 @@ func initCmd() *cobra.Command {
 }
 
 var claudeCommands = map[string]string{
-	"review-full": `Full PR review in one shot: $ARGUMENTS
+	"reviewiq-full": `Full PR review in one shot: $ARGUMENTS
 
 $ARGUMENTS: GitHub PR link or number.
 
@@ -179,7 +179,7 @@ Reviews entire diff at once, posts inline comments with suggestion blocks, and s
 7. Post summary comment with finding table and assessment
 8. Save state to .pr-review/reviews/pr-<N>.json
 `,
-	"review-pr": `Review the PR: $ARGUMENTS
+	"reviewiq-pr": `Review the PR: $ARGUMENTS
 
 Follow the protocol in ` + "`.pr-review/agent.md`" + `. Load relevant skills from ` + "`.pr-review/skills/`" + ` based on the changed files.
 
@@ -194,9 +194,9 @@ Follow the protocol in ` + "`.pr-review/agent.md`" + `. Load relevant skills fro
 7. Save findings to .pr-review/reviews/pr-<N>.json per the state schema in agent.md
 
 After review, remind the developer of available commands:
-/review-check, /review-explain, /review-fix, /review-status, /review-ask, /review-retract, /review-wontfix, /review-approve, /review-summarize
+/reviewiq-check, /reviewiq-explain, /reviewiq-fix, /reviewiq-status, /reviewiq-ask, /reviewiq-retract, /reviewiq-wontfix, /reviewiq-approve, /reviewiq-summarize
 `,
-	"review-check": `Incremental re-review of branch: $ARGUMENTS
+	"reviewiq-check": `Incremental re-review of branch: $ARGUMENTS
 
 The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
 
@@ -210,7 +210,7 @@ The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
 7. Create a new review round in state, save.
 8. Output status update table and updated summary.
 `,
-	"review-explain": `Deep dive into finding: $ARGUMENTS
+	"reviewiq-explain": `Deep dive into finding: $ARGUMENTS
 
 ## Steps
 1. Load state from .pr-review/reviews/ — find the finding by ID.
@@ -220,7 +220,7 @@ The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
 5. If the developer disagrees and is right, transition to retracted.
 6. Add exchange to the finding's discussion array. Save state.
 `,
-	"review-fix": `Apply the suggested fix for finding: $ARGUMENTS
+	"reviewiq-fix": `Apply the suggested fix for finding: $ARGUMENTS
 
 ## Steps
 1. Load state — find the finding by ID.
@@ -230,7 +230,7 @@ The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
 5. If fix touches shared code, check callers with git grep.
 6. Transition finding to resolved with note. Save state.
 `,
-	"review-status": `Show current finding statuses.
+	"reviewiq-status": `Show current finding statuses.
 
 ## Steps
 1. Find the most recent state file in .pr-review/reviews/.
@@ -243,7 +243,7 @@ Open: X | Resolved: Y | Won't fix: Z | Retracted: W | Assessment: ...
 
 Do NOT re-review. Just read and display the state file.
 `,
-	"review-ask": `Follow-up question about the review: $ARGUMENTS
+	"reviewiq-ask": `Follow-up question about the review: $ARGUMENTS
 
 ## Steps
 1. Load state from .pr-review/reviews/.
@@ -253,7 +253,7 @@ Do NOT re-review. Just read and display the state file.
 5. If answer leads to a status change, update state.
 6. Add to finding's discussion thread if applicable. Save state.
 `,
-	"review-retract": `Retract finding (agent was wrong): $ARGUMENTS
+	"reviewiq-retract": `Retract finding (agent was wrong): $ARGUMENTS
 
 Format: <finding-id> [reason]
 
@@ -262,7 +262,7 @@ Format: <finding-id> [reason]
 2. Transition finding to retracted with reason. Recompute summary. Save state.
 3. Output: Finding <N>: open → retracted — <reason>
 `,
-	"review-wontfix": `Mark finding as won't fix: $ARGUMENTS
+	"reviewiq-wontfix": `Mark finding as won't fix: $ARGUMENTS
 
 Format: <finding-id> [reason]
 
@@ -271,7 +271,7 @@ Format: <finding-id> [reason]
 2. Consider if reasoning is sound. If yes, transition to wontfix. If not, explain why and keep open.
 3. Record in discussion thread. Recompute summary. Save state.
 `,
-	"review-resolve": `Mark finding as resolved: $ARGUMENTS
+	"reviewiq-resolve": `Mark finding as resolved: $ARGUMENTS
 
 Format: <finding-id> [note]
 
@@ -281,7 +281,7 @@ Format: <finding-id> [note]
 3. Output: Finding <N>: open → resolved — <note>
 4. If all blockers resolved, note PR may be ready to merge.
 `,
-	"review-approve": `Final check — any blockers remaining?
+	"reviewiq-approve": `Final check — any blockers remaining?
 
 ## Steps
 1. Load state from .pr-review/reviews/.
@@ -290,14 +290,14 @@ Format: <finding-id> [note]
 4. Output BLOCKED (with list) or APPROVE (safe to merge).
 5. Update assessment in state if approved. Save state.
 `,
-	"review-summarize": `Generate a PR summary for the merge commit.
+	"reviewiq-summarize": `Generate a PR summary for the merge commit.
 
 ## Steps
 1. Load state. Read the full diff and changed files.
 2. Generate concise summary: what changed, why, key decisions, findings addressed, trade-offs.
 3. Format for merge commit message or PR description.
 `,
-	"review-impact": `Blast radius analysis for the current PR.
+	"reviewiq-impact": `Blast radius analysis for the current PR.
 
 ## Steps
 1. Load state. Get the full diff and changed files.
@@ -306,7 +306,7 @@ Format: <finding-id> [note]
 4. Flag what could break in production but pass tests.
 5. Output blast radius table.
 `,
-	"review-test": `Generate test cases for the reviewed changes: $ARGUMENTS
+	"reviewiq-test": `Generate test cases for the reviewed changes: $ARGUMENTS
 
 Optional: specific finding ID to focus on.
 
@@ -728,7 +728,7 @@ Examples:
 				allFileNames = append(allFileNames, f.Filename)
 			}
 			s.ReviewRounds = append(s.ReviewRounds, state.NewReviewRound(
-				round, prInfo.HeadSHA, prInfo.BaseSHA, "review-pr", allFileNames,
+				round, prInfo.HeadSHA, prInfo.BaseSHA, "reviewiq-pr", allFileNames,
 			))
 			s.Summary.LastReviewedSHA = prInfo.HeadSHA
 
@@ -1006,7 +1006,7 @@ Examples:
 
 			round := len(s.ReviewRounds) + 1
 			s.ReviewRounds = append(s.ReviewRounds, state.NewReviewRound(
-				round, prInfo.HeadSHA, prInfo.BaseSHA, "review-full", allFilenames,
+				round, prInfo.HeadSHA, prInfo.BaseSHA, "reviewiq-full", allFilenames,
 			))
 			s.Summary.LastReviewedSHA = prInfo.HeadSHA
 
