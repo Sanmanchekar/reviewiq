@@ -44,7 +44,7 @@ check_go() {
         error "Go is not installed. Install it from https://go.dev/dl/ (requires >= 1.22)"
     fi
     local ver
-    ver="$(go version | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    ver="$(go version </dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)"
     info "Found Go $ver"
 }
 
@@ -90,9 +90,9 @@ cleanup_old() {
         local repo_root
         repo_root="$(git rev-parse --show-toplevel)"
         local old_cmds
-        old_cmds=$(ls "$repo_root/.claude/commands/review-"*.md 2>/dev/null)
+        old_cmds=$(ls "$repo_root/.claude/commands/review-"*.md 2>/dev/null || true)
         if [[ -n "$old_cmds" ]]; then
-            rm -f "$repo_root/.claude/commands/review-"*.md
+            rm -f "$repo_root/.claude/commands/review-"*.md 2>/dev/null || true
             info "Removed old review-*.md commands (renamed to reviewiq-*.md)"
         fi
     fi
@@ -107,14 +107,14 @@ install_binary() {
     tmp="$(mktemp -d)"
     trap "rm -rf $tmp" EXIT
 
-    step "Cloning repository..."
-    if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$tmp/reviewiq"; then
-        error "Failed to clone $REPO_URL. Check your network connection."
-    fi
+    step "Downloading source..."
+    curl -sSL "https://github.com/Sanmanchekar/reviewiq/archive/refs/heads/main.tar.gz" -o "$tmp/reviewiq.tar.gz" </dev/null
+    tar -xzf "$tmp/reviewiq.tar.gz" -C "$tmp" </dev/null
+    mv "$tmp/reviewiq-main" "$tmp/reviewiq"
 
     step "Building binary..."
     cd "$tmp/reviewiq"
-    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/
+    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/ </dev/null
     chmod +x "$INSTALL_DIR/$BINARY"
     ln -sf "$INSTALL_DIR/$BINARY" "$INSTALL_DIR/riq"
 
@@ -196,7 +196,7 @@ EOF
 repo_init() {
     if ! git rev-parse --is-inside-work-tree &>/dev/null; then
         info "Not inside a git repo — skipping repo init."
-        info "Run 'reviewiq init' inside any git repo to set up slash commands."
+        info "Run 'reviewiq init </dev/null' inside any git repo to set up slash commands."
         return
     fi
 
@@ -206,8 +206,8 @@ repo_init() {
     step "Setting up repo at $repo_root..."
     cd "$repo_root"
 
-    # Run reviewiq init (creates .pr-review/, .claude/commands/reviewiq-*, cleans old review-*)
-    reviewiq init
+    # Run reviewiq init </dev/null (creates .pr-review/, .claude/commands/reviewiq-*, cleans old review-*)
+    reviewiq init </dev/null
 
     cd - >/dev/null
 }
@@ -277,5 +277,4 @@ main() {
     verify
 }
 
-# </dev/null prevents git/go from hanging when script is piped via curl | bash
-main </dev/null
+main
