@@ -133,15 +133,67 @@ install_gh() {
 
     if command -v gh &>/dev/null; then
         info "Installed gh $(gh --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')"
-        if ! gh auth status &>/dev/null; then
-            warn "gh installed but not authenticated. Run: gh auth login"
-        fi
     elif $gh_installed; then
-        warn "gh installed to $INSTALL_DIR but may need PATH refresh."
-        warn "Restart terminal or run: source $SHELL_RC"
+        info "gh installed to $INSTALL_DIR"
     else
         warn "Could not install gh CLI. Install manually: https://cli.github.com"
         warn "ReviewIQ will fall back to curl + GITHUB_TOKEN for PR reviews."
+    fi
+}
+
+setup_gh_auth() {
+    # Skip if gh not installed
+    if ! command -v gh &>/dev/null; then
+        return
+    fi
+
+    # Skip if already authenticated
+    if gh auth status &>/dev/null; then
+        info "gh already authenticated"
+        return
+    fi
+
+    step "GitHub authentication required for PR reviews."
+    echo ""
+    echo -e "  ${CYAN}How to get a token:${NC}"
+    echo -e "  1. Go to https://github.com/settings/tokens"
+    echo -e "  2. Generate new token (classic)"
+    echo -e "  3. Select scopes: ${BOLD}repo${NC}, ${BOLD}read:org${NC}"
+    echo -e "  4. Copy the token"
+    echo ""
+
+    # Read from /dev/tty to get user input even when piped via curl | bash
+    local token=""
+    if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
+        echo -ne "  ${BOLD}Paste your GitHub token (or press Enter to skip):${NC} "
+        read -r token < /dev/tty 2>/dev/null || true
+    fi
+
+    if [[ -n "$token" ]]; then
+        echo "$token" | gh auth login --with-token 2>/dev/null
+        if gh auth status &>/dev/null; then
+            info "GitHub authenticated successfully"
+        else
+            warn "Authentication failed. Run 'gh auth login' manually."
+            # Still save token for curl fallback
+            setup_token_env "$token"
+        fi
+    else
+        warn "Skipped GitHub auth. Run 'gh auth login' later to enable PR reviews."
+    fi
+}
+
+setup_token_env() {
+    local token="$1"
+    detect_shell_rc
+    if [[ -n "$SHELL_RC" ]] && [[ -n "$token" ]]; then
+        if ! grep -q "GITHUB_TOKEN" "$SHELL_RC" 2>/dev/null; then
+            echo "" >> "$SHELL_RC"
+            echo "# GitHub token for ReviewIQ" >> "$SHELL_RC"
+            echo "export GITHUB_TOKEN=\"$token\"" >> "$SHELL_RC"
+            info "Saved GITHUB_TOKEN to $SHELL_RC"
+        fi
+        export GITHUB_TOKEN="$token"
     fi
 }
 
@@ -361,6 +413,7 @@ main() {
     check_git
     check_go
     install_gh
+    setup_gh_auth
     cleanup_old
     install_binary
     setup_path
