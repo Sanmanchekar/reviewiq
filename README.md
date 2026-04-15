@@ -32,7 +32,7 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 | Surface | How | LLM | API Key? | State |
 |---------|-----|-----|----------|-------|
 | **Claude Code** | `/reviewiq-full <PR>`, `/reviewiq-pr <PR>`, or `review this PR` | Claude Code's own | No | Local JSON |
-| **CLI** | `reviewiq review-full <PR>`, `reviewiq review-pr <PR>` | Claude API | Yes (`ANTHROPIC_API_KEY` + `GITHUB_TOKEN`) | Local JSON |
+| **CLI** | `reviewiq full <PR>`, `reviewiq pr <PR>` | Claude API | Yes (`ANTHROPIC_API_KEY` + `GITHUB_TOKEN`) | Local JSON |
 | **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
 | **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
 
@@ -102,12 +102,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export GITHUB_TOKEN=ghp_...
 
 # Full PR review — one shot, auto-posts to PR
-reviewiq review-full https://github.com/owner/repo/pull/42
-reviewiq review-full 42                     # if inside the repo
+reviewiq full https://github.com/owner/repo/pull/42
+reviewiq full 42                     # if inside the repo
 
 # File-by-file interactive review
-reviewiq review-pr https://github.com/owner/repo/pull/42
-reviewiq review-pr 42 --post                # post inline comments
+reviewiq pr https://github.com/owner/repo/pull/42
+reviewiq pr 42 --post                # post inline comments
 
 # Branch-based review (no PR link needed)
 reviewiq review feature/webhook-retries
@@ -305,8 +305,8 @@ The Go binary for terminal and CI use. Requires `ANTHROPIC_API_KEY`.
 
 | Command | Purpose | State Change |
 |---------|---------|--------------|
-| `reviewiq review-full <PR>` | Full review, all files, auto-posts to PR | Creates findings + posts |
-| `reviewiq review-pr <PR>` | File-by-file interactive review | Creates findings per file |
+| `reviewiq full <PR>` | Full review, all files, auto-posts to PR | Creates findings + posts |
+| `reviewiq pr <PR>` | File-by-file interactive review | Creates findings per file |
 | `reviewiq init` | Initialize `.pr-review/` + `.claude/commands/` | Creates all files |
 | `reviewiq review <branch>` | Branch-based review (local) | Creates findings (open) |
 | `reviewiq check <branch>` | Incremental re-review | Updates finding statuses |
@@ -436,8 +436,8 @@ Commands map 1:1 between Claude Code and CLI:
 
 | Action | Claude Code | CLI |
 |--------|-------------|-----|
-| Full PR review (one shot) | `/reviewiq-full <PR-link>` | `reviewiq review-full <PR-link>` |
-| File-by-file PR review | `/reviewiq-pr <PR-link>` | `reviewiq review-pr <PR-link> --post` |
+| Full PR review (one shot) | `/reviewiq-full <PR-link>` | `reviewiq full <PR-link>` |
+| File-by-file PR review | `/reviewiq-pr <PR-link>` | `reviewiq pr <PR-link> --post` |
 | Branch review (local) | `review this PR` | `reviewiq review <branch>` |
 | Re-review | `/reviewiq-check <branch>` | `reviewiq check <branch>` |
 | Status | `/reviewiq-status` | `reviewiq status` |
@@ -468,10 +468,10 @@ Commands map 1:1 between Claude Code and CLI:
 /reviewiq-summarize
 
 # CLI — one shot
-reviewiq review-full https://github.com/owner/repo/pull/42
+reviewiq full https://github.com/owner/repo/pull/42
 
 # CLI — interactive
-reviewiq review-pr 42 --post
+reviewiq pr 42 --post
 reviewiq explain 2
 reviewiq retract 3 --note "ORM handles it"
 reviewiq check feature/payment-retry

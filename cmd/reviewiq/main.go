@@ -156,8 +156,8 @@ func initCmd() *cobra.Command {
 			fmt.Println("Usage:")
 			fmt.Println("  Claude Code: /reviewiq-full <PR-link>   (one-shot, auto-posts)")
 			fmt.Println("               /reviewiq-pr <PR-link>     (file-by-file)")
-			fmt.Println("  CLI:         reviewiq review-full <PR-link>")
-			fmt.Println("               reviewiq review-pr <PR-link> --post")
+			fmt.Println("  CLI:         reviewiq full <PR-link>")
+			fmt.Println("               reviewiq pr <PR-link> --post")
 		},
 	}
 }
@@ -643,15 +643,15 @@ func ciCmd() *cobra.Command {
 func reviewPRCmd() *cobra.Command {
 	var post bool
 	cmd := &cobra.Command{
-		Use:   "review-pr <pr-link-or-number>",
+		Use:   "pr <pr-link-or-number>",
 		Short: "Review a GitHub PR file-by-file with inline comments",
 		Long: `Review a GitHub PR by fetching diffs from the GitHub API,
 reviewing each file against relevant skills, and posting
 inline comments with suggestion blocks on the PR.
 
 Examples:
-  reviewiq review-pr https://github.com/owner/repo/pull/42
-  reviewiq review-pr 42  (if inside the repo)`,
+  reviewiq pr https://github.com/owner/repo/pull/42
+  reviewiq pr 42  (if inside the repo)`,
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			input := args[0]
@@ -874,7 +874,7 @@ Keep it focused — this is one file, not the whole PR.`,
 			fmt.Printf("State: .pr-review/reviews/pr-%d.json\n", prNumber)
 
 			if !post && len(allComments) > 0 {
-				fmt.Printf("\nTo post findings to PR: reviewiq review-pr %s --post\n", input)
+				fmt.Printf("\nTo post findings to PR: reviewiq pr %s --post\n", input)
 			}
 
 			state.Save(s, "local")
@@ -886,7 +886,7 @@ Keep it focused — this is one file, not the whole PR.`,
 
 func reviewFullCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review-full <pr-link-or-number>",
+		Use:   "full <pr-link-or-number>",
 		Short: "Full PR review in one shot — review all files, post comments, suggestions, and resolutions",
 		Long: `Reviews the entire PR diff at once using all relevant skills,
 then posts a complete review with inline comments, suggestion
@@ -896,8 +896,8 @@ Unlike review-pr (file-by-file interactive), this runs end-to-end
 in one command with no user interaction.
 
 Examples:
-  reviewiq review-full https://github.com/owner/repo/pull/42
-  reviewiq review-full 42`,
+  reviewiq full https://github.com/owner/repo/pull/42
+  reviewiq full 42`,
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			input := args[0]
