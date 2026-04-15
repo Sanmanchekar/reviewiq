@@ -151,178 +151,58 @@ func initCmd() *cobra.Command {
 			fmt.Println("  .pr-review/agent.md              — review protocol")
 			fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			fmt.Println()
-			fmt.Println("  Claude Code commands (14):")
-			cmds := []string{"reviewiq-full", "reviewiq-pr", "reviewiq-check", "reviewiq-explain", "reviewiq-fix",
-				"reviewiq-status", "reviewiq-ask", "reviewiq-retract", "reviewiq-wontfix",
-				"reviewiq-resolve", "reviewiq-approve", "reviewiq-summarize", "reviewiq-impact", "reviewiq-test"}
-			for _, c := range cmds {
-				if _, ok := claudeCommands[c]; ok {
-					fmt.Printf("    /%-24s .claude/commands/%s.md\n", c, c)
-				}
+			fmt.Println("  Claude Code commands (3):")
+			for name := range claudeCommands {
+				fmt.Printf("    /%-24s .claude/commands/%s.md\n", name, name)
 			}
 			fmt.Println()
 			fmt.Println("Usage:")
-			fmt.Println("  Claude Code: /reviewiq-full <PR-link>   (one-shot, auto-posts)")
-			fmt.Println("               /reviewiq-pr <PR-link>     (file-by-file)")
-			fmt.Println("  CLI:         reviewiq full <PR-link>")
-			fmt.Println("               reviewiq pr <PR-link> --post")
+			fmt.Println("  /reviewiq-pr <PR> [--full|--interactive]")
+			fmt.Println("  /reviewiq-recheck <PR>")
+			fmt.Println("  /reviewiq-resolve <PR>")
 		},
 	}
 }
 
 var claudeCommands = map[string]string{
-	"reviewiq-full": `Full PR review in one shot: $ARGUMENTS
+	"reviewiq-pr": `Review PR: $ARGUMENTS
 
-$ARGUMENTS: GitHub PR link or number.
+$ARGUMENTS: PR link, PR number, or branch + optional flag (--full or --interactive).
 
-Reviews entire diff at once, posts inline comments with suggestion blocks, and summary to the PR. No interaction needed.
+/reviewiq-pr 42                     # --full (default): all files, auto-post
+/reviewiq-pr 42 --full              # same, explicit
+/reviewiq-pr 42 --interactive       # file-by-file, post/skip per file
 
 ## Steps
-1. Fetch PR: ` + "`gh pr view <number> --json title,author,baseRefName,headRefName,files`" + `
-2. Get full diff: ` + "`gh pr diff <number>`" + `
-3. Read ALL changed files in full
-4. Load ALL relevant skills from ~/.reviewiq/skills/ or .pr-review/skills/
-5. Run 4-stage review with cross-file analysis
-6. Post inline comments with suggestion blocks on each finding
-7. Post summary comment with finding table and assessment
-8. Save state to .pr-review/reviews/pr-<N>.json
+1. Fetch PR via gh CLI or GitHub API
+2. Create .pr-review/pr-<N>/ folder with state.json + round-N/report.md
+3. Load relevant skills from ~/.reviewiq/skills/ or .pr-review/skills/
+4. --full: review all files, cross-file analysis, auto-post inline comments + report
+5. --interactive: review per file, show findings, ask P(post)/S(skip)/F(fix), auto-skip if no findings
+6. Save state + markdown report
 `,
-	"reviewiq-pr": `Review the PR: $ARGUMENTS
+	"reviewiq-recheck": `Re-review PR with history: $ARGUMENTS
 
-Follow the protocol in ` + "`.pr-review/agent.md`" + `. Load relevant skills from ` + "`.pr-review/skills/`" + ` based on the changed files.
+$ARGUMENTS: PR link, PR number, or branch.
 
 ## Steps
-
-1. Check for existing state: ` + "`ls .pr-review/reviews/`" + ` — if found, read the state file for prior findings.
-2. Detect base branch: ` + "`git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`" + ` (fallback: main)
-3. Get diff: ` + "`git diff <base>...$ARGUMENTS`" + `
-4. Read ALL changed files in full
-5. Load skill files from .pr-review/skills/ — always load commandments, security, scalability, stability, maintainability, performance. Then load language/framework/domain skills matching the changed files.
-6. Run the 4-stage review: Understand → Analyze (against skill checklists) → Assess (CRITICAL/IMPORTANT/NIT/QUESTION) → Report
-7. Save findings to .pr-review/reviews/pr-<N>.json per the state schema in agent.md
-
-After review, remind the developer of available commands:
-/reviewiq-check, /reviewiq-explain, /reviewiq-fix, /reviewiq-status, /reviewiq-ask, /reviewiq-retract, /reviewiq-wontfix, /reviewiq-approve, /reviewiq-summarize
+1. Load previous state.json — knows all findings and statuses
+2. Fetch current code, compare against last reviewed SHA
+3. Auto-resolve findings where code is fixed
+4. Keep pending findings that aren't fixed
+5. Check new changes for new issues
+6. Post new round report as PR comment (appends, never overwrites)
+7. Save updated state + round-N/report.md
 `,
-	"reviewiq-check": `Incremental re-review of branch: $ARGUMENTS
+	"reviewiq-resolve": `Verify all findings resolved and approve PR: $ARGUMENTS
 
-The developer has pushed fixes. Follow the check command in .pr-review/agent.md.
-
-## Steps
-1. Load state from .pr-review/reviews/ — you know which findings are open and what SHA was last reviewed.
-2. Get the incremental diff since last_reviewed_sha in state.
-3. Read all currently changed files in full.
-4. Load relevant skills from .pr-review/skills/.
-5. For each finding: RESOLVED → transition with note. PARTIALLY FIXED → note what's missing. UNRESOLVED → keep open.
-6. Check for NEW issues introduced by the fixes.
-7. Create a new review round in state, save.
-8. Output status update table and updated summary.
-`,
-	"reviewiq-explain": `Deep dive into finding: $ARGUMENTS
+$ARGUMENTS: PR link, PR number, or branch.
 
 ## Steps
-1. Load state from .pr-review/reviews/ — find the finding by ID.
-2. Read the file referenced by the finding in full.
-3. Trace execution: what calls this? What does it call? Use git grep -n <symbol>.
-4. Show concrete scenarios where the issue manifests.
-5. If the developer disagrees and is right, transition to retracted.
-6. Add exchange to the finding's discussion array. Save state.
-`,
-	"reviewiq-fix": `Apply the suggested fix for finding: $ARGUMENTS
-
-## Steps
-1. Load state — find the finding by ID.
-2. Read the current file state.
-3. Apply the suggested fix (or refined version from discussion).
-4. Self-check: re-read file, verify syntax, logic, imports, no side effects.
-5. If fix touches shared code, check callers with git grep.
-6. Transition finding to resolved with note. Save state.
-`,
-	"reviewiq-status": `Show current finding statuses.
-
-## Steps
-1. Find the most recent state file in .pr-review/reviews/.
-2. Read it and output a status table:
-
-| # | Severity | Status | Title | File |
-|---|----------|--------|-------|------|
-
-Open: X | Resolved: Y | Won't fix: Z | Retracted: W | Assessment: ...
-
-Do NOT re-review. Just read and display the state file.
-`,
-	"reviewiq-ask": `Follow-up question about the review: $ARGUMENTS
-
-## Steps
-1. Load state from .pr-review/reviews/.
-2. If question references a finding, load its full context and discussion history.
-3. Read the relevant code files.
-4. Answer using loaded skill knowledge and code tracing.
-5. If answer leads to a status change, update state.
-6. Add to finding's discussion thread if applicable. Save state.
-`,
-	"reviewiq-retract": `Retract finding (agent was wrong): $ARGUMENTS
-
-Format: <finding-id> [reason]
-
-## Steps
-1. Load state. Parse finding ID and reason.
-2. Transition finding to retracted with reason. Recompute summary. Save state.
-3. Output: Finding <N>: open → retracted — <reason>
-`,
-	"reviewiq-wontfix": `Mark finding as won't fix: $ARGUMENTS
-
-Format: <finding-id> [reason]
-
-## Steps
-1. Load state. Parse finding ID and reason.
-2. Consider if reasoning is sound. If yes, transition to wontfix. If not, explain why and keep open.
-3. Record in discussion thread. Recompute summary. Save state.
-`,
-	"reviewiq-resolve": `Mark finding as resolved: $ARGUMENTS
-
-Format: <finding-id> [note]
-
-## Steps
-1. Load state. Parse finding ID and note.
-2. Transition to resolved. Recompute summary. Save state.
-3. Output: Finding <N>: open → resolved — <note>
-4. If all blockers resolved, note PR may be ready to merge.
-`,
-	"reviewiq-approve": `Final check — any blockers remaining?
-
-## Steps
-1. Load state from .pr-review/reviews/.
-2. List CRITICAL/IMPORTANT findings still open — these are blockers.
-3. Read all changed files one final time.
-4. Output BLOCKED (with list) or APPROVE (safe to merge).
-5. Update assessment in state if approved. Save state.
-`,
-	"reviewiq-summarize": `Generate a PR summary for the merge commit.
-
-## Steps
-1. Load state. Read the full diff and changed files.
-2. Generate concise summary: what changed, why, key decisions, findings addressed, trade-offs.
-3. Format for merge commit message or PR description.
-`,
-	"reviewiq-impact": `Blast radius analysis for the current PR.
-
-## Steps
-1. Load state. Get the full diff and changed files.
-2. For each changed function/class, trace ALL callers with git grep -n <symbol>.
-3. Map: direct callers, transitive dependencies, shared state, external consumers.
-4. Flag what could break in production but pass tests.
-5. Output blast radius table.
-`,
-	"reviewiq-test": `Generate test cases for the reviewed changes: $ARGUMENTS
-
-Optional: specific finding ID to focus on.
-
-## Steps
-1. Load state for open findings.
-2. Find existing test files to learn conventions.
-3. Generate tests: happy path, edge cases from findings, regression tests.
-4. Match repo's test conventions. Output test code.
+1. Load all state + all round reports
+2. For each pending finding: verify code is fixed
+3. If ALL resolved: post final resolution report + approve PR via gh pr review --approve
+4. If still pending: list what's open, do NOT approve
 `,
 }
 
