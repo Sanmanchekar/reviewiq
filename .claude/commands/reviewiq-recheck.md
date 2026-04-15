@@ -73,18 +73,31 @@ Finding 4 (NEW): Null check missing — `handler.py:35`
 
 ## 6. Post Update to PR
 
-Post the re-review summary as a PR comment.
-For new findings, post inline comments with suggestions.
+**Post as NEW PR comment** — do NOT edit previous round comments. Each round is a separate comment so the full history is visible in the PR timeline.
+
+```bash
+gh pr comment <N> --body "$(cat round-N/report.md)"
+```
+
+For NEW findings only, post inline comments with ```suggestion blocks.
+Do NOT re-post inline comments for existing pending findings.
 
 ## 7. Save State & Report
 
 Update `state.json` with new statuses.
-Create `round-N/report.md`.
+Create `round-N/report.md` (same content as posted to PR).
 Append to `history.md`:
 ```
 ### Round 2 — 2026-04-15
 Re-review: 2/3 resolved, 1 new finding
 Assessment: NEEDS DISCUSSION
+```
+
+The PR now has a visible timeline:
+```
+Comment 1: ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
+Comment 2: ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
+Comment 3: ReviewIQ Report — Round 3 (all resolved, APPROVE)
 ```
 
 ## Token Optimization

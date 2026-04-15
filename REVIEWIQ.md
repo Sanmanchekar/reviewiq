@@ -2,19 +2,21 @@
 
 When the user asks to review a PR, review code, or uses reviewiq commands, activate ReviewIQ.
 
-## 3 Commands
+## 4 Commands
 
 | Command | What it does |
 |---------|-------------|
-| `reviewiq-full <input>` | Full review, all files at once, auto-posts to PR |
+| `reviewiq-full <input>` | Full review, all files at once, auto-posts findings + report to PR |
 | `reviewiq-pr <input>` | File-by-file interactive — show findings, user confirms post/skip per file |
-| `reviewiq-recheck <input>` | Re-review with history — auto-resolve fixed findings, flag new issues |
+| `reviewiq-recheck <input>` | Re-review — auto-resolve fixed findings, flag new issues, post new report |
+| `reviewiq-resolve <input>` | Final check — verify all findings resolved, approve PR |
 
 **Input**: PR link (`https://github.com/owner/repo/pull/42`), PR number (`42`), or branch (`feature/xyz`).
 
 **Natural language also works**:
 - "review this PR" / "review this PR to develop" → acts like reviewiq-full on current branch
 - "recheck" / "check again" → acts like reviewiq-recheck
+- "resolve" / "approve" → acts like reviewiq-resolve
 
 ## Input Detection
 
@@ -103,8 +105,10 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 2. Load all relevant skills across all files
 3. Review with cross-file analysis
 4. Post inline comments with ```suggestion blocks
-5. Post summary comment
+5. Post markdown report as PR comment (iteration report with all findings)
 6. Save state.json + round-N/report.md + history.md
+
+**Report posting**: each round is a NEW PR comment. Previous rounds stay visible. The PR timeline shows the review evolution.
 
 ## reviewiq-pr Flow
 
@@ -127,8 +131,16 @@ For each file:
    - Still broken? → keep pending
    - Changed differently? → needs-review
 4. Check new changes for new issues
-5. Post update to PR
-6. Save updated state + new round report
+5. Post NEW PR comment with this round's report (append to timeline, don't overwrite)
+6. Post inline comments only for NEW findings
+7. Save updated state + new round report
+
+## reviewiq-resolve Flow
+
+1. Load all state + all round reports
+2. For each pending finding: verify code is fixed
+3. If ALL resolved: post final resolution report + approve PR via `gh pr review --approve`
+4. If still pending: list what's still open, do NOT approve
 
 ## Report Format (round-N/report.md)
 

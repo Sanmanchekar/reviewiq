@@ -57,11 +57,37 @@ For each finding output:
 
 ## 5. Post to PR
 
-Post each finding as inline comment with ```suggestion block.
-Post summary comment with finding table + assessment.
+**Inline comments**: post each finding as inline comment with ```suggestion block on the exact line.
+
+**PR comment with full iteration report**: post the markdown report as a PR comment. This becomes the persistent record of each review round.
+
+```bash
+gh pr comment <N> --body "$(cat round-N/report.md)"
+```
+
+The report format:
+```markdown
+# ReviewIQ Report — PR #42 Round 1
+**Date**: 2026-04-15 | **Skills**: python, django (~4.2K words)
+
+## Findings
+### 1. [CRITICAL] Retry without backoff — `retry.py:42` — pending
+**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
+**Resolution**: Add exponential backoff with jitter
+**Comment**: Thundering herd risk at 500 queued webhooks
+
+## Summary
+| Status | Count |
+|--------|-------|
+| Pending | 3 |
+| Resolved | 0 |
+Assessment: REQUEST CHANGES
+```
+
+On subsequent rounds (reviewiq-recheck), the new report is posted as a NEW comment — previous round reports stay visible in the PR history. Each iteration appends, never overwrites.
 
 ## 6. Save State & Report
 
 `state.json`: all findings with `status: "pending"`.
-`round-N/report.md`: full markdown report with date, skills used, all findings.
+`round-N/report.md`: full markdown report (same as posted to PR).
 `history.md`: append this round's summary.

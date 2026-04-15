@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**3 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations.**
+**4 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, auto-approve when resolved.**
 
 [Quick Start](#quick-start) |
 [Commands](#commands) |
@@ -30,11 +30,12 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 
 | Command | What it does |
 |---------|-------------|
-| **`reviewiq-full`** | Full review — all files at once, auto-posts to PR |
+| **`reviewiq-full`** | Full review — all files at once, auto-posts findings + report to PR |
 | **`reviewiq-pr`** | Interactive — file-by-file, user confirms post/skip per file |
-| **`reviewiq-recheck`** | Re-review — loads history, auto-resolves fixed findings, flags new issues |
+| **`reviewiq-recheck`** | Re-review — auto-resolves fixed findings, flags new issues, posts new report |
+| **`reviewiq-resolve`** | Final check — verify all findings resolved, approve PR |
 
-**Input**: PR link, PR number, or branch — all three commands accept any format.
+**Input**: PR link, PR number, or branch — all four commands accept any format.
 
 ---
 
@@ -71,6 +72,9 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 # Re-review — check what's fixed, what's still open
 /reviewiq-recheck https://github.com/owner/repo/pull/42
 
+# Resolve — verify all fixed, approve PR
+/reviewiq-resolve https://github.com/owner/repo/pull/42
+
 # Also works with PR number or branch
 /reviewiq-full 42
 /reviewiq-pr feature/payment-retry
@@ -78,6 +82,7 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 # Natural language
 review this PR                    # acts like reviewiq-full
 recheck                           # acts like reviewiq-recheck
+resolve / approve                 # acts like reviewiq-resolve
 ```
 
 **CLI** (needs `ANTHROPIC_API_KEY`):
@@ -85,6 +90,7 @@ recheck                           # acts like reviewiq-recheck
 reviewiq full https://github.com/owner/repo/pull/42
 reviewiq pr 42
 reviewiq recheck 42
+reviewiq resolve 42
 ```
 
 ---
@@ -140,6 +146,14 @@ Skills loaded: python, django (~2K words)
 
 **Token efficient**: loads skills per-file (~2-3K words vs ~8K for all files).
 
+**PR timeline** — each round posts a NEW comment (never overwrites previous):
+```
+PR #42 comments:
+  💬 ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
+  💬 ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
+  💬 ReviewIQ Resolution — All resolved, APPROVED ✓
+```
+
 ---
 
 ### `/reviewiq-recheck` — Re-review with History
@@ -174,6 +188,45 @@ Re-review Report — Round 2
 
 Previously: 3 findings → Now: 2 open, 2 resolved
 Assessment: REQUEST CHANGES → NEEDS DISCUSSION
+```
+
+---
+
+### `/reviewiq-resolve` — Verify All Fixed & Approve
+
+Goes through all rounds, verifies every finding is resolved, approves the PR.
+
+```
+/reviewiq-resolve https://github.com/owner/repo/pull/42
+```
+
+**Flow**:
+1. Load all state + all round reports
+2. For each pending finding: read current code, verify fix applied
+3. If ALL resolved:
+   - Post final resolution report to PR
+   - Approve PR via `gh pr review --approve`
+4. If still pending: list what's still open, do NOT approve
+
+**Output when resolved**:
+```
+ReviewIQ Final Resolution — PR #42
+
+| # | Severity | Status | Resolution |
+|---|----------|--------|------------|
+| 1 | CRITICAL | ✅ resolved | Backoff added (Round 2) |
+| 2 | IMPORTANT | ✅ resolved | Idempotency key added (Round 3) |
+| 3 | NIT | ✅ resolved | Fixed (Round 2) |
+
+All findings resolved. PR APPROVED.
+```
+
+**Output when not resolved**:
+```
+Cannot approve — 1 finding still pending:
+  Finding 2: [IMPORTANT] Missing idempotency — handler.py:18
+
+Run /reviewiq-recheck after fixes are pushed.
 ```
 
 ---
@@ -340,9 +393,10 @@ cmd/reviewiq/main.go              CLI (Go + cobra)
 internal/
   state/ engine/ git/ skills/ github/ ci/
 .claude/commands/
-  reviewiq-full.md                /reviewiq-full
-  reviewiq-pr.md                  /reviewiq-pr
-  reviewiq-recheck.md             /reviewiq-recheck
+  reviewiq-full.md                /reviewiq-full — one-shot review + post
+  reviewiq-pr.md                  /reviewiq-pr — file-by-file interactive
+  reviewiq-recheck.md             /reviewiq-recheck — re-review with history
+  reviewiq-resolve.md             /reviewiq-resolve — verify + approve
 .pr-review/skills/                16 skill files
 install.sh                        One-line installer
 uninstall.sh                      One-line uninstaller
