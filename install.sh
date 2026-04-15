@@ -3,7 +3,7 @@
 # ReviewIQ Installer
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh -o /tmp/reviewiq-install.sh && bash /tmp/reviewiq-install.sh
 #
 # What it does:
 #   1. Builds and installs the Go binary to ~/.local/bin
