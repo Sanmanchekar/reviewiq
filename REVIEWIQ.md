@@ -15,8 +15,34 @@ When the user asks to "review this PR", "review PR", "review code", "reviewiq-fu
 
 When a GitHub PR link is provided (`https://github.com/owner/repo/pull/42`):
 1. Parse owner, repo, PR number from URL
-2. Fetch PR metadata and changed files via `gh pr view <number> --json files,title,author,baseRefName,headRefName`
-3. Get diff via `gh pr diff <number>`
+2. Fetch PR data using **whichever method is available** (try in order):
+
+**Method A — gh CLI** (if installed):
+```bash
+gh pr view <number> --repo owner/repo --json files,title,author,baseRefName,headRefName
+gh pr diff <number> --repo owner/repo
+```
+
+**Method B — GitHub API via curl** (fallback, needs GITHUB_TOKEN):
+```bash
+# PR metadata
+curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/pulls/<number>
+
+# Changed files with diffs
+curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/pulls/<number>/files
+
+# Full file content
+curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/contents/<filepath>?ref=<head_sha>
+```
+
+**Method C — git clone** (fallback, no token needed for public repos):
+```bash
+git clone --depth 1 --branch <head_branch> https://github.com/owner/repo.git /tmp/reviewiq-pr-<number>
+cd /tmp/reviewiq-pr-<number>
+git diff origin/<base_branch>...HEAD
+```
+
+Try Method A first. If `gh` is not installed, try Method B. If no token, try Method C.
 
 ### Full Review Mode (review-full)
 
