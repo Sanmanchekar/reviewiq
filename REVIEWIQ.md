@@ -2,19 +2,23 @@
 
 When the user asks to review a PR, review code, or uses reviewiq commands, activate ReviewIQ.
 
-## 4 Commands
+## 3 Commands
 
 | Command | What it does |
 |---------|-------------|
-| `reviewiq-full <input>` | Full review, all files at once, auto-posts findings + report to PR |
-| `reviewiq-pr <input>` | File-by-file interactive — show findings, user confirms post/skip per file |
+| `reviewiq-pr <input>` | Review PR — `--full` (default, all files) or `--interactive` (file-by-file) |
 | `reviewiq-recheck <input>` | Re-review — auto-resolve fixed findings, flag new issues, post new report |
 | `reviewiq-resolve <input>` | Final check — verify all findings resolved, approve PR |
+
+**Flags for reviewiq-pr**:
+- `--full` (default): all files at once, auto-posts everything to PR
+- `--interactive`: file-by-file, user confirms post/skip per file
 
 **Input**: PR link (`https://github.com/owner/repo/pull/42`), PR number (`42`), or branch (`feature/xyz`).
 
 **Natural language also works**:
-- "review this PR" / "review this PR to develop" → acts like reviewiq-full on current branch
+- "review this PR" → acts like `reviewiq-pr --full` on current branch
+- "review this PR interactively" → acts like `reviewiq-pr --interactive`
 - "recheck" / "check again" → acts like reviewiq-recheck
 - "resolve" / "approve" → acts like reviewiq-resolve
 
@@ -99,28 +103,26 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 - reviewiq-pr: ~2-3K words per file (only that file's skills)
 - reviewiq-recheck: ~1-2K words (only changed files + state context)
 
-## reviewiq-full Flow
+## reviewiq-pr --full Flow (default)
 
 1. Fetch all diffs + file contents
 2. Load all relevant skills across all files
 3. Review with cross-file analysis
 4. Post inline comments with ```suggestion blocks
-5. Post markdown report as PR comment (iteration report with all findings)
+5. Post markdown report as PR comment (iteration report)
 6. Save state.json + round-N/report.md + history.md
 
-**Report posting**: each round is a NEW PR comment. Previous rounds stay visible. The PR timeline shows the review evolution.
-
-## reviewiq-pr Flow
+## reviewiq-pr --interactive Flow
 
 For each file:
-1. Load skills for THIS file only
+1. Load skills for THIS file only (~2-3K words)
 2. Review single file against skills
 3. **If findings**: show suggestion + resolution + comment, ask user:
    - `P` (post) — post inline comments for this file
    - `S` (skip) — skip, move to next
    - `F <N>` (fix) — apply suggestion N
 4. **If no findings**: auto-move to next file (no prompt)
-5. After all files: post summary, save state + report
+5. After all files: post summary report, save state
 
 ## reviewiq-recheck Flow
 

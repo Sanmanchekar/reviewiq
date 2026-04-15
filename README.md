@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**4 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, auto-approve when resolved.**
+**3 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, auto-approve when resolved.**
 
 [Quick Start](#quick-start) |
 [Commands](#commands) |
@@ -30,12 +30,11 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 
 | Command | What it does |
 |---------|-------------|
-| **`reviewiq-full`** | Full review — all files at once, auto-posts findings + report to PR |
-| **`reviewiq-pr`** | Interactive — file-by-file, user confirms post/skip per file |
-| **`reviewiq-recheck`** | Re-review — auto-resolves fixed findings, flags new issues, posts new report |
-| **`reviewiq-resolve`** | Final check — verify all findings resolved, approve PR |
+| **`reviewiq-pr`** | Review PR — `--full` (default) or `--interactive` (file-by-file) |
+| **`reviewiq-recheck`** | Re-review — auto-resolves fixed findings, flags new issues |
+| **`reviewiq-resolve`** | Final check — verify all resolved, approve PR |
 
-**Input**: PR link, PR number, or branch — all four commands accept any format.
+**Input**: PR link, PR number, or branch. **Flags**: `--full` (default), `--interactive`.
 
 ---
 
@@ -63,32 +62,30 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 
 **Claude Code** (no API key needed):
 ```bash
-# Full review — posts everything to PR
-/reviewiq-full https://github.com/owner/repo/pull/42
+# Full review (default) — all files, auto-posts to PR
+/reviewiq-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr 42 --full                   # same, explicit flag
 
 # File-by-file — confirm post/skip per file
-/reviewiq-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr 42 --interactive
 
 # Re-review — check what's fixed, what's still open
-/reviewiq-recheck https://github.com/owner/repo/pull/42
+/reviewiq-recheck 42
 
 # Resolve — verify all fixed, approve PR
-/reviewiq-resolve https://github.com/owner/repo/pull/42
-
-# Also works with PR number or branch
-/reviewiq-full 42
-/reviewiq-pr feature/payment-retry
+/reviewiq-resolve 42
 
 # Natural language
-review this PR                    # acts like reviewiq-full
+review this PR                    # acts like reviewiq-pr --full
+review this PR interactively      # acts like reviewiq-pr --interactive
 recheck                           # acts like reviewiq-recheck
 resolve / approve                 # acts like reviewiq-resolve
 ```
 
 **CLI** (needs `ANTHROPIC_API_KEY`):
 ```bash
-reviewiq full https://github.com/owner/repo/pull/42
-reviewiq pr 42
+reviewiq pr https://github.com/owner/repo/pull/42          # --full (default)
+reviewiq pr 42 --interactive                                # file-by-file
 reviewiq recheck 42
 reviewiq resolve 42
 ```
@@ -97,61 +94,53 @@ reviewiq resolve 42
 
 ## Commands
 
-### `/reviewiq-full` — Full Review
+### `/reviewiq-pr` — Review PR
 
-Reviews all files at once with cross-file analysis, posts everything to PR automatically.
-
-```
-/reviewiq-full https://github.com/owner/repo/pull/42
-```
-
-**Flow**:
-1. Fetch PR diff + all file contents
-2. Load relevant skills across all files
-3. 4-stage review: Understand → Analyze → Assess → Report
-4. Post inline comments with `suggestion` blocks on PR
-5. Post summary comment with finding table
-6. Save state + markdown report
-
-**Each finding includes**:
-- **Suggestion**: exact replacement code (GitHub `Apply suggestion` button)
-- **Resolution**: how to fix it
-- **Comment**: additional context
-
----
-
-### `/reviewiq-pr` — File-by-File Interactive
-
-Reviews one file at a time. Shows findings, waits for user confirmation before posting.
+One command, two modes:
 
 ```
-/reviewiq-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr 42                    # --full (default): all files, auto-post
+/reviewiq-pr 42 --full             # same, explicit
+/reviewiq-pr 42 --interactive      # file-by-file, post/skip per file
 ```
 
-**Flow per file**:
+**Each finding includes**: suggestion (exact code), resolution (how to fix), comment (context).
+
+#### `--full` (default)
+
+All files at once with cross-file analysis. Auto-posts inline comments + report.
+
+1. Load all relevant skills (~5-8K words)
+2. 4-stage review: Understand → Analyze → Assess → Report
+3. Post `suggestion` blocks on each finding line
+4. Post markdown report as PR comment
+5. Save state + report
+
+#### `--interactive`
+
+One file at a time, only that file's skills loaded (~2-3K words).
+
 ```
-Reviewing file 1/4: src/webhooks/retry.py
-Skills loaded: python, django (~2K words)
+File 1/4: src/webhooks/retry.py
+Skills: python, django (~2K words)
 
   Finding 1: [CRITICAL] Retry without backoff — line 42
-  Suggestion: time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
+  Suggestion: time.sleep(min(2 ** attempt * 0.5, 30))
   Resolution: Add exponential backoff with jitter
-  Comment: At 500 queued webhooks, immediate retry = thundering herd
 
-  [P] Post comments    [S] Skip    [F 1] Fix finding 1
+  [P] Post    [S] Skip    [F 1] Fix
 ```
 
-- **If findings**: shows them, waits for `P` (post) / `S` (skip) / `F <N>` (fix)
-- **If no findings**: auto-moves to next file (no prompt)
+- **Findings found** → `P` (post) / `S` (skip) / `F <N>` (fix)
+- **No findings** → auto-moves to next file
 
-**Token efficient**: loads skills per-file (~2-3K words vs ~8K for all files).
+#### PR Timeline
 
-**PR timeline** — each round posts a NEW comment (never overwrites previous):
+Each round is a NEW comment (previous rounds stay visible):
 ```
-PR #42 comments:
-  💬 ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
-  💬 ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
-  💬 ReviewIQ Resolution — All resolved, APPROVED ✓
+💬 ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
+💬 ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
+💬 ReviewIQ Resolution — All resolved, APPROVED ✓
 ```
 
 ---
@@ -336,7 +325,7 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 
 | Mode | Skills loaded | Per-call cost |
 |------|-------------|---------------|
-| `reviewiq-full` | All relevant across all files | ~5-8K words |
+| `reviewiq-pr --full` | All relevant across all files | ~5-8K words |
 | `reviewiq-pr` | Per-file only | ~2-3K words/file |
 | `reviewiq-recheck` | Only changed files | ~1-2K words |
 
@@ -393,8 +382,7 @@ cmd/reviewiq/main.go              CLI (Go + cobra)
 internal/
   state/ engine/ git/ skills/ github/ ci/
 .claude/commands/
-  reviewiq-full.md                /reviewiq-full — one-shot review + post
-  reviewiq-pr.md                  /reviewiq-pr — file-by-file interactive
+  reviewiq-pr.md                  /reviewiq-pr — review (--full or --interactive)
   reviewiq-recheck.md             /reviewiq-recheck — re-review with history
   reviewiq-resolve.md             /reviewiq-resolve — verify + approve
 .pr-review/skills/                16 skill files

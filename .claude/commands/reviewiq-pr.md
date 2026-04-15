@@ -1,6 +1,16 @@
-File-by-file PR review with user confirmation: $ARGUMENTS
+Review PR: $ARGUMENTS
 
-$ARGUMENTS: PR link (`https://github.com/owner/repo/pull/42`), PR number (`42`), or branch (`feature/xyz`).
+$ARGUMENTS: PR link, PR number, or branch + optional flag.
+
+```
+/reviewiq-pr 42                          # default: --full
+/reviewiq-pr 42 --full                   # all files at once, auto-post
+/reviewiq-pr 42 --interactive            # file-by-file, post/skip per file
+/reviewiq-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr feature/payment-retry --interactive
+```
+
+Parse $ARGUMENTS: extract the PR identifier and check for `--full` or `--interactive` flag. Default is `--full`.
 
 ## 1. Detect Input & Fetch
 
@@ -16,108 +26,117 @@ git diff --name-only main...<branch>
 
 ## 2. Create Review Folder
 
-Same structure as reviewiq-full:
 ```
 .pr-review/
   pr-42/
-    state.json
+    state.json          # findings with status: pending/resolved
     round-1/
-      report.md
-    history.md
+      report.md         # markdown report for this iteration
+    history.md          # running log across rounds
 ```
 
-## 3. Show Overview
+If folder exists from previous review, increment round number.
 
+## 3. Load Skills
+
+From `~/.reviewiq/skills/` or `.pr-review/skills/`:
+- **Always** (6): commandments, security, scalability, stability, maintainability, performance
+- **By extension**: only matching section from languages.md
+- **By imports**: only matching section from frameworks.md
+- **By domain**: fintech.md, fraud.md, etc. only if triggered
+
+Log: "Skills loaded: X, Y, Z (~N words)"
+
+---
+
+## --full Mode (default)
+
+Reviews all files at once with cross-file analysis, auto-posts everything.
+
+### 4a. Review All Files
+
+Read full diff + all file contents. 4-stage review:
+- Understand → Analyze (against skill checklists) → Assess → Report
+
+For each finding:
 ```
-PR #42: "Add payment retry logic" by @developer
-Branch: feature/payment-retry → main
-Files (4):
-  1. src/webhooks/retry.py        (+45, -12)
-  2. src/webhooks/handler.py      (+8, -3)
-  3. src/config/settings.py       (+2, -0)
-  4. tests/test_webhooks.py       (+30, -0)
-
-Reviewing file 1/4...
-```
-
-## 4. For Each File
-
-### 4a. Load skills for THIS file only (token-efficient)
-- `.py` → Python section from languages.md + check imports for framework
-- Only the matching sections, not full skill files
-- Log: "Skills: python, django (~2K words)"
-
-### 4b. Review single file
-Read only this file's diff + full content. Check against loaded skills.
-
-### 4c. Show findings (if any)
-
-If findings exist for this file, show each with:
-```
-### Finding 1: Retry without backoff
-**Severity**: CRITICAL
-**File**: `src/webhooks/retry.py:42`
-
-**Suggestion**:
-  time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
-
-**Resolution**: Add exponential backoff with jitter
-
-**Comment**: At 500 queued webhooks during recovery, immediate retry = thundering herd
+### Finding <N>: <title>
+**Severity**: CRITICAL / IMPORTANT / NIT / QUESTION
+**File**: `path:line` | **Status**: pending
+**Suggestion**: exact replacement code
+**Resolution**: how to fix it
+**Comment**: additional context
 ```
 
-Then ask:
+### 5a. Post to PR
+
+- Inline comments with ```suggestion blocks on each finding line
+- PR comment with full markdown report (iteration report)
+
+```bash
+gh pr comment <N> --body "$(cat round-N/report.md)"
+```
+
+### 6a. Save
+
+`state.json` + `round-N/report.md` + append to `history.md`
+
+---
+
+## --interactive Mode
+
+Reviews one file at a time. Shows findings, waits for user confirmation.
+
+### 4b. For Each File
+
+**Load skills for THIS file only** (token-efficient: ~2-3K words vs ~8K)
+
+**If findings exist**, show each with suggestion + resolution + comment, then ask:
 ```
 File 1/4: src/webhooks/retry.py — 2 findings (1 CRITICAL, 1 NIT)
 
-  [P] Post comments to PR    — post all findings for this file
-  [S] Skip                    — don't post, move to next file
-  [F] Fix <N>                 — apply suggestion for finding N
+  Finding 1: [CRITICAL] Retry without backoff — line 42
+  Suggestion: time.sleep(min(2 ** attempt * 0.5, 30))
+  Resolution: Add exponential backoff with jitter
+
+  [P] Post comments    [S] Skip    [F 1] Fix finding 1
 ```
 
-Wait for user input: `P` / `S` / `F <N>`
+Wait for: `P` (post) / `S` (skip) / `F <N>` (apply fix)
 
-### 4d. If NO findings for this file
-```
-File 3/4: src/config/settings.py — No findings ✓
-Moving to next file...
-```
-Auto-move to next file. No prompt needed.
+**If NO findings**: auto-move to next file (no prompt)
 
-### 4e. Post (if user chose P)
-Post inline comments with ```suggestion blocks for this file only.
+### 5b. After All Files
 
-### 4f. Move to next file
-Repeat from 4a.
+Post summary as PR comment. Save state + report.
 
-## 5. Summary
+---
 
-After all files:
-```
-## Review Complete
-| File | Findings | Posted | Skipped |
-|------|----------|--------|---------|
-| retry.py | 2 | 2 | 0 |
-| handler.py | 1 | 0 | 1 |
-| settings.py | 0 | — | — |
-| test_webhooks.py | 1 | 1 | 0 |
+## Report Format (posted as PR comment)
 
-Total: 4 findings | Posted: 3 | Skipped: 1
+```markdown
+# ReviewIQ Report — PR #42 Round 1
+**Date**: 2026-04-15 | **Mode**: full | **Skills**: python, django (~4.2K words)
+
+## Findings
+### 1. [CRITICAL] Retry without backoff — `retry.py:42` — pending
+**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
+**Resolution**: Add exponential backoff with jitter
+**Comment**: Thundering herd risk
+
+## Summary
+| Status | Count |
+|--------|-------|
+| Pending | 3 |
+| Resolved | 0 |
 Assessment: REQUEST CHANGES
 ```
 
-Post summary comment to PR.
+Each round is a NEW PR comment — previous rounds stay visible.
 
-## 6. Save State & Report
+## Token Budget
 
-`state.json`: all findings with status (`pending` if posted, `skipped` if skipped).
-`round-N/report.md`: full markdown report.
-`history.md`: append round summary.
-
-## Token Optimization
-
-- Load skills PER FILE, not all at once
-- Only the matching section (Python section, not full languages.md)
-- Review one file at a time — previous file's context is NOT carried
-- Auto-skip files with no findings (no LLM call needed for "no issues")
-- Skill detection is local (file extension + import grep) — no LLM call
+| Mode | What's loaded | Cost |
+|------|-------------|------|
+| `--full` | All files + all relevant skills | ~5-8K words |
+| `--interactive` | One file + that file's skills | ~2-3K words/file |
