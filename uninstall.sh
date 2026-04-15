@@ -76,7 +76,35 @@ main() {
         found=true
     fi
 
-    # 5. Clean PATH entries from shell rc files
+    # 5. Clean repo-level files (if in a git repo)
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        local repo_root
+        repo_root="$(git rev-parse --show-toplevel)"
+
+        # Remove slash command files
+        local removed_repo=false
+        for pattern in "reviewiq-*.md" "review-*.md"; do
+            for f in "$repo_root/.claude/commands/"$pattern; do
+                if [[ -f "$f" ]]; then
+                    rm -f "$f"
+                    removed_repo=true
+                fi
+            done
+        done
+        if $removed_repo; then
+            info "Removed slash commands from $repo_root/.claude/commands/"
+            found=true
+        fi
+
+        # Remove .pr-review/ directory
+        if [[ -d "$repo_root/.pr-review" ]]; then
+            rm -rf "$repo_root/.pr-review"
+            info "Removed $repo_root/.pr-review/"
+            found=true
+        fi
+    fi
+
+    # 6. Clean PATH entries from shell rc files
     for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
         if [[ -f "$rc" ]] && grep -q "# ReviewIQ" "$rc" 2>/dev/null; then
             sed -i.bak '/# ReviewIQ/d' "$rc"
@@ -94,11 +122,9 @@ main() {
         echo -e "  - Binary (reviewiq, riq)"
         echo -e "  - Global skills (~/.reviewiq/)"
         echo -e "  - Claude Code config (~/.claude/REVIEWIQ.md)"
+        echo -e "  - Repo slash commands (.claude/commands/reviewiq-*.md)"
+        echo -e "  - Repo review config (.pr-review/)"
         echo -e "  - PATH entries"
-        echo ""
-        echo -e "NOT removed (repo-level files, delete manually if needed):"
-        echo -e "  - .pr-review/ in your repos"
-        echo -e "  - .claude/commands/review-*.md in your repos"
     else
         warn "ReviewIQ not found. Nothing to uninstall."
     fi

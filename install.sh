@@ -189,6 +189,27 @@ EOF
     fi
 }
 
+# ── Step 4: Init current repo ─────────────────────────────────────────────────
+
+repo_init() {
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        info "Not inside a git repo — skipping repo init."
+        info "Run 'reviewiq init' inside any git repo to set up slash commands."
+        return
+    fi
+
+    local repo_root
+    repo_root="$(git rev-parse --show-toplevel)"
+
+    step "Setting up repo at $repo_root..."
+    cd "$repo_root"
+
+    # Run reviewiq init (creates .pr-review/, .claude/commands/reviewiq-*, cleans old review-*)
+    reviewiq init
+
+    cd - >/dev/null
+}
+
 # ── Verify ───────────────────────────────────────────────────────────────────
 
 verify() {
@@ -250,6 +271,7 @@ main() {
     install_binary
     setup_path
     install_claude_config
+    repo_init
     verify
 }
 
