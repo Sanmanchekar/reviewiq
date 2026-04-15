@@ -84,6 +84,18 @@ cleanup_old() {
             info "Old Python version removed"
         fi
     fi
+
+    # Clean up old review-*.md command files in current repo (if in a git repo)
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        local repo_root
+        repo_root="$(git rev-parse --show-toplevel)"
+        local old_cmds
+        old_cmds=$(ls "$repo_root/.claude/commands/review-"*.md 2>/dev/null)
+        if [[ -n "$old_cmds" ]]; then
+            rm -f "$repo_root/.claude/commands/review-"*.md
+            info "Removed old review-*.md commands (renamed to reviewiq-*.md)"
+        fi
+    fi
 }
 
 # ── Step 1: Build and install binary ─────────────────────────────────────────

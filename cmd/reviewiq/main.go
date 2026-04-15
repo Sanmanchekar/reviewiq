@@ -115,6 +115,14 @@ func initCmd() *cobra.Command {
 			// .claude/commands/ — slash commands for Claude Code
 			claudeDir := filepath.Join(".claude", "commands")
 			os.MkdirAll(claudeDir, 0o755)
+
+			// Clean up old review-*.md files (renamed to reviewiq-*.md)
+			oldFiles, _ := filepath.Glob(filepath.Join(claudeDir, "review-*.md"))
+			for _, old := range oldFiles {
+				os.Remove(old)
+				fmt.Printf("  Removed old: %s\n", filepath.Base(old))
+			}
+
 			for name, content := range claudeCommands {
 				path := filepath.Join(claudeDir, name+".md")
 				if _, err := os.Stat(path); err != nil {
