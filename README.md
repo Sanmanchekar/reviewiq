@@ -12,14 +12,13 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**One install, works everywhere. 14 commands, 16 review skills — review PRs, post inline suggestions, track findings across sessions.**
+**3 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations.**
 
 [Quick Start](#quick-start) |
-[Claude Code Commands](#claude-code-commands) |
-[CLI Commands](#cli-commands) |
+[Commands](#commands) |
+[Review Folder](#review-folder) |
 [Skills System](#skills-system) |
-[Architecture](#architecture) |
-[CI Integration](#ci-integration)
+[Architecture](#architecture)
 
 </div>
 
@@ -27,14 +26,15 @@
 
 ## Overview
 
-ReviewIQ is a stateful PR review agent that carries domain expertise as loadable skill modules. Instead of reasoning from scratch, the agent reviews against pre-built expert checklists for your specific stack — security, performance, fintech, DevOps, and more. Findings are tracked objects with lifecycles, conversations carry full history, and incremental reviews diff against known state.
+ReviewIQ reviews PRs using domain expert skill modules — security, performance, fintech, DevOps, and more. Findings are tracked with statuses (pending/resolved), iterations are saved as markdown reports, and the agent posts inline suggestions directly on the PR.
 
-| Surface | How | LLM | API Key? | State |
-|---------|-----|-----|----------|-------|
-| **Claude Code** | `/reviewiq-full <PR>`, `/reviewiq-pr <PR>`, or `review this PR` | Claude Code's own | No | Local JSON |
-| **CLI** | `reviewiq full <PR>`, `reviewiq pr <PR>` | Claude API | Yes (`ANTHROPIC_API_KEY` + `GITHUB_TOKEN`) | Local JSON |
-| **GitHub Actions** | Auto on PR open/push/comment | Claude API | Yes | Hidden PR comment |
-| **Cursor / Codex / Aider** | Reference `.pr-review/agent.md` | Agent's own | No | Local JSON |
+| Command | What it does |
+|---------|-------------|
+| **`reviewiq-full`** | Full review — all files at once, auto-posts to PR |
+| **`reviewiq-pr`** | Interactive — file-by-file, user confirms post/skip per file |
+| **`reviewiq-recheck`** | Re-review — loads history, auto-resolves fixed findings, flags new issues |
+
+**Input**: PR link, PR number, or branch — all three commands accept any format.
 
 ---
 
@@ -46,25 +46,12 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
-Or with Go:
-
-```bash
-go install github.com/Sanmanchekar/reviewiq/cmd/reviewiq@latest
-```
-
-Or build from source:
-
-```bash
-git clone https://github.com/Sanmanchekar/reviewiq.git
-cd reviewiq
-go build -o /usr/local/bin/reviewiq ./cmd/reviewiq/
-ln -s /usr/local/bin/reviewiq /usr/local/bin/riq
-```
+Installs: Go binary + gh CLI + 16 skills + Claude Code config. One command, everything ready.
 
 ### Update / Uninstall
 
 ```bash
-# Update (same as install — overwrites the binary)
+# Update
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 
 # Uninstall
@@ -73,116 +60,232 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 
 ### Usage
 
-The installer sets up everything globally — binary, skills (`~/.reviewiq/skills/`), and Claude Code config (`~/.claude/REVIEWIQ.md`). Works in every repo immediately. No per-repo init needed.
-
-**Claude Code (just talk naturally — no API key needed):**
+**Claude Code** (no API key needed):
 ```bash
-# Full PR review — one shot, posts everything to PR
+# Full review — posts everything to PR
 /reviewiq-full https://github.com/owner/repo/pull/42
 
-# File-by-file interactive review
+# File-by-file — confirm post/skip per file
 /reviewiq-pr https://github.com/owner/repo/pull/42
 
-# Or review current branch
-review this PR                              # auto-detects: current branch → main
-review this PR to develop                   # explicit target branch
+# Re-review — check what's fixed, what's still open
+/reviewiq-recheck https://github.com/owner/repo/pull/42
 
-# After review, continue naturally:
-next                                        # move to next file (reviewiq-pr mode)
-explain finding 2                           # deep dive
-fix finding 1                               # applies the fix
-post                                        # post findings as PR inline comments
-check review                                # re-review after pushing fixes
-approve                                     # final check
+# Also works with PR number or branch
+/reviewiq-full 42
+/reviewiq-pr feature/payment-retry
+
+# Natural language
+review this PR                    # acts like reviewiq-full
+recheck                           # acts like reviewiq-recheck
 ```
 
-**CLI (native terminal — requires `ANTHROPIC_API_KEY` + `GITHUB_TOKEN`):**
+**CLI** (needs `ANTHROPIC_API_KEY`):
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export GITHUB_TOKEN=ghp_...
-
-# Full PR review — one shot, auto-posts to PR
 reviewiq full https://github.com/owner/repo/pull/42
-reviewiq full 42                     # if inside the repo
-
-# File-by-file interactive review
-reviewiq pr https://github.com/owner/repo/pull/42
-reviewiq pr 42 --post                # post inline comments
-
-# Branch-based review (no PR link needed)
-reviewiq review feature/webhook-retries
-reviewiq status
-reviewiq check feature/webhook-retries
-reviewiq approve
+reviewiq pr 42
+reviewiq recheck 42
 ```
-
-**GitHub Actions (automated — requires `ANTHROPIC_API_KEY` secret):**
-```
-Developer opens PR → Agent posts review automatically
-Developer comments @review-agent why? → Agent replies with context
-Developer pushes fix → Agent re-reviews incrementally
-```
-
-**Per-repo customization** (optional): Run `reviewiq init` to copy skills into your repo for team-specific rules. Repo-level skills at `.pr-review/skills/` override global defaults.
 
 ---
 
-## Claude Code Commands
+## Commands
 
-Works globally in Claude Code — just talk naturally. The installer sets up `~/.claude/REVIEWIQ.md` so Claude Code understands review commands in every repo.
+### `/reviewiq-full` — Full Review
 
-### Natural Language Commands
+Reviews all files at once with cross-file analysis, posts everything to PR automatically.
 
-| What you say | What happens |
-|-------------|--------------|
-| `/reviewiq-full <PR-link>` | Full review, all files at once, auto-posts comments + suggestions to PR |
-| `/reviewiq-pr <PR-link>` | File-by-file interactive review with inline PR comments |
-| `review this PR` | Full 4-stage review (auto-detects current branch → main) |
-| `review this PR to develop` | Review current branch against develop |
-| `check review` / `re-review` | Incremental re-review after pushing fixes |
-| `review status` / `show findings` | Finding status table |
-| `explain finding 2` / `explain #2` | Deep dive with code tracing |
-| `fix finding 1` / `fix #1` | Apply the suggested fix directly |
-| `resolve 1 backoff added` | Mark finding as resolved |
-| `retract 3 ORM handles it` | Retract finding (agent was wrong) |
-| `wontfix 2 acceptable risk` | Mark as won't fix |
-| `approve` / `final check` | Check for remaining blockers |
-| `summarize PR` | Generate merge commit summary |
-| `blast radius` / `impact analysis` | Trace what could break |
-| `generate tests` / `test finding 2` | Generate test cases |
-
-### Slash Commands (also available)
-
-If you run `reviewiq init` in a repo, 14 `/reviewiq-*` slash commands are also created:
-
-`/reviewiq-full`, `/reviewiq-pr`, `/reviewiq-check`, `/reviewiq-explain`, `/reviewiq-fix`, `/reviewiq-status`, `/reviewiq-ask`, `/reviewiq-resolve`, `/reviewiq-retract`, `/reviewiq-wontfix`, `/reviewiq-approve`, `/reviewiq-summarize`, `/reviewiq-impact`, `/reviewiq-test`
-
-### Typical Flow
-
-```bash
-# Checkout your feature branch
-git checkout feature/payment-retry
-
-# In Claude Code:
-review this PR
-# Agent: loads skills, reviews, outputs 4 findings
-
-explain finding 2
-# Agent: traces code, shows concrete scenarios
-
-fix finding 1
-# Agent: applies fix, verifies, marks resolved
-
-# Push fixes, then:
-check review
-# Agent: Finding 1 → resolved, Finding 2 → partial, 1 new nit
-
-approve
-# "APPROVE — no remaining blockers. Safe to merge."
-
-summarize PR
-# Generates merge commit message
 ```
+/reviewiq-full https://github.com/owner/repo/pull/42
+```
+
+**Flow**:
+1. Fetch PR diff + all file contents
+2. Load relevant skills across all files
+3. 4-stage review: Understand → Analyze → Assess → Report
+4. Post inline comments with `suggestion` blocks on PR
+5. Post summary comment with finding table
+6. Save state + markdown report
+
+**Each finding includes**:
+- **Suggestion**: exact replacement code (GitHub `Apply suggestion` button)
+- **Resolution**: how to fix it
+- **Comment**: additional context
+
+---
+
+### `/reviewiq-pr` — File-by-File Interactive
+
+Reviews one file at a time. Shows findings, waits for user confirmation before posting.
+
+```
+/reviewiq-pr https://github.com/owner/repo/pull/42
+```
+
+**Flow per file**:
+```
+Reviewing file 1/4: src/webhooks/retry.py
+Skills loaded: python, django (~2K words)
+
+  Finding 1: [CRITICAL] Retry without backoff — line 42
+  Suggestion: time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
+  Resolution: Add exponential backoff with jitter
+  Comment: At 500 queued webhooks, immediate retry = thundering herd
+
+  [P] Post comments    [S] Skip    [F 1] Fix finding 1
+```
+
+- **If findings**: shows them, waits for `P` (post) / `S` (skip) / `F <N>` (fix)
+- **If no findings**: auto-moves to next file (no prompt)
+
+**Token efficient**: loads skills per-file (~2-3K words vs ~8K for all files).
+
+---
+
+### `/reviewiq-recheck` — Re-review with History
+
+Loads previous review state, checks what's fixed, what's still open, flags new issues.
+
+```
+/reviewiq-recheck https://github.com/owner/repo/pull/42
+```
+
+**Flow**:
+1. Load `state.json` from previous review
+2. Fetch current code
+3. For each pending finding:
+   - Code fixed? → **auto-resolve**
+   - Still broken? → **keep pending**
+   - Changed differently? → **needs-review**
+4. Check new changes for new issues
+5. Post update to PR
+6. Save updated state + new round report
+
+**Output**:
+```
+Re-review Report — Round 2
+
+| # | Severity | Previous | Current | Note |
+|---|----------|----------|---------|------|
+| 1 | CRITICAL | pending  | resolved | Backoff added ✓ |
+| 2 | IMPORTANT| pending  | pending  | Still missing idempotency |
+| 3 | NIT      | pending  | resolved | Error message fixed ✓ |
+| 4 | IMPORTANT| —        | NEW      | Null check missing |
+
+Previously: 3 findings → Now: 2 open, 2 resolved
+Assessment: REQUEST CHANGES → NEEDS DISCUSSION
+```
+
+---
+
+## Review Folder
+
+Each review gets a persistent folder with iteration tracking and markdown reports:
+
+```
+.pr-review/
+  pr-42/                          # one folder per PR/branch
+    state.json                    # master state: all findings + statuses
+    round-1/
+      report.md                   # markdown report for round 1
+    round-2/
+      report.md                   # markdown report for round 2
+    history.md                    # running log of all rounds
+```
+
+### state.json
+
+```json
+{
+  "pr": { "number": 42, "repo": "owner/repo", "title": "...", "base": "main", "head": "feature/xyz" },
+  "current_round": 2,
+  "last_reviewed_sha": "abc123",
+  "findings": {
+    "1": {
+      "id": 1, "severity": "CRITICAL", "status": "pending",
+      "file": "retry.py", "line": 42,
+      "title": "Retry without backoff",
+      "suggestion": "time.sleep(min(2 ** attempt * 0.5, 30))",
+      "resolution": "Add exponential backoff with jitter",
+      "comment": "Thundering herd risk at scale",
+      "created_round": 1, "resolved_round": null,
+      "history": [
+        { "round": 1, "status": "pending", "note": "Initial" },
+        { "round": 2, "status": "resolved", "note": "Backoff added" }
+      ]
+    }
+  },
+  "summary": { "total": 3, "pending": 1, "resolved": 2 }
+}
+```
+
+### Finding Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Found, not yet fixed |
+| `resolved` | Fix confirmed in code |
+| `skipped` | User chose to skip |
+| `needs-review` | Code changed but not per suggestion |
+
+### Markdown Reports (round-N/report.md)
+
+```markdown
+# ReviewIQ Report — PR #42 Round 1
+**Date**: 2026-04-15
+**Skills**: commandments, security, python, django (~4.2K words)
+**Files**: 4 | **Findings**: 3
+
+## Finding 1: [CRITICAL] Retry without backoff — `retry.py:42`
+**Status**: pending
+**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
+**Resolution**: Add exponential backoff
+**Comment**: Thundering herd risk
+
+## Summary
+Pending: 3 | Resolved: 0
+Assessment: REQUEST CHANGES
+```
+
+---
+
+## Skills System
+
+Auto-detects languages, frameworks, and domains from changed files. Loads only relevant skill sections — not full files.
+
+### Always Loaded (6)
+
+| Skill | What it covers |
+|-------|----------------|
+| **Commandments** | 40 universal laws: correctness, security, reliability, data, APIs, testing |
+| **Security** | Injection, auth, crypto, data protection, dependencies (OWASP-aligned) |
+| **Scalability** | Database, caching, concurrency, network, compute, architecture |
+| **Stability** | Error handling, resilience, observability, deployment safety |
+| **Maintainability** | Complexity, naming, organization, testability, refactoring |
+| **Performance** | Algorithms, memory, database, I/O, CPU, frontend, caching |
+
+### Auto-Detected
+
+| Skill | Triggers on |
+|-------|-------------|
+| **Languages** | `.py`, `.java`, `.go`, `.ts`, `.cpp`, `.rs`, `.cs`, `.rb`, `.php`, `.sh` |
+| **Frameworks** | Django, FastAPI, Flask, Spring, React, Next.js, Express, Vue, Angular, Rails, .NET |
+| **DevOps** | Dockerfile, Chart.yaml, `*.tf`, K8s manifests, CI configs |
+| **Fintech** | stripe, razorpay, payment, loan, emi, insurance, ledger, kyc |
+| **India Regulatory** | upi, nach, aadhaar, rbi, nbfc, ifsc |
+| **Credit Bureau** | cibil, experian, equifax, credit_score |
+| **Fraud** | fraud, risk_engine, velocity, device_fingerprint |
+| **Notifications** | sms, twilio, sendgrid, fcm, whatsapp |
+| **Financial Microservices** | saga, outbox, event_sourcing, kafka |
+| **Data Privacy** | gdpr, ccpa, dpdp, consent, pii |
+
+### Token Budget
+
+| Mode | Skills loaded | Per-call cost |
+|------|-------------|---------------|
+| `reviewiq-full` | All relevant across all files | ~5-8K words |
+| `reviewiq-pr` | Per-file only | ~2-3K words/file |
+| `reviewiq-recheck` | Only changed files | ~1-2K words |
 
 ---
 
@@ -192,409 +295,57 @@ summarize PR
 ┌──────────────────────────────────────────────────────────────────┐
 │                        REVIEWIQ PLATFORM                         │
 ├──────────────┬───────────────────────┬───────────────────────────┤
-│ Input Layer  │   Processing Core     │   Output Layer            │
+│ Input        │   Processing          │   Output                  │
 ├──────────────┼───────────────────────┼───────────────────────────┤
-│ PR link/branch│ Skill Detection       │ Structured findings       │
-│ Git diff      │  ├ File extensions   │ Inline PR comments        │
-│ Changed files │  ├ Import scanning   │ ```suggestion blocks      │
-│ File contents │  └ Domain matching   │ Finding lifecycle         │
-│ PR metadata   │ Review Engine        │ Incremental re-reviews    │
-│ Prior state   │  ├ 4-stage pipeline  │ Conversation history      │
-│ Conversation  │  ├ Skill-guided      │ State JSON                │
-│               │  └ LLM (see below)   │ Summary + assessment      │
-│              │ State Manager         │                           │
-│              │  ├ Local JSON files   │                           │
-│              │  └ GitHub PR comments │                           │
+│ PR link      │ Skill Detection       │ Inline PR comments        │
+│ PR number    │  └ per-file loading   │ ```suggestion blocks      │
+│ Branch       │ 4-Stage Review        │ Markdown reports          │
+│ Prior state  │  └ skill-guided       │ State JSON                │
+│              │ State Manager         │ History log               │
+│              │  └ folder per review  │                           │
 ├──────────────┼───────────────────────┼───────────────────────────┤
-│              │   Two LLM Modes       │                           │
-│              │ Claude Code: agent's  │                           │
-│              │   own LLM (no key)    │                           │
-│              │ CLI/CI: Claude API    │                           │
-│              │   (needs API key)     │                           │
+│              │ Claude Code: no key   │                           │
+│              │ CLI: Claude API       │                           │
 └──────────────┴───────────────────────┴───────────────────────────┘
 ```
-
-### Processing Pipeline
-
-```
-PR Opened → Skill Detection → Context Assembly → 4-Stage Review → State Persist
-                │                    │                  │              │
-          File extensions      Git diff +          Understand     Findings as
-          Import scanning      Full file read      Analyze        tracked JSON
-          Domain matching      Symbol tracing      Assess         objects with
-                                                   Report         lifecycle
-```
-
-### State Persistence
-
-All interactions write state to `.pr-review/reviews/`:
-- **JSON state files**: Findings, conversation, review rounds, assessment
-- **Finding lifecycle**: `open → resolved | partially_fixed | wontfix | retracted`
-- **Cross-session**: Resume any review from where you left off
-- **Dual backend**: Local files (CLI/Claude Code) + hidden PR comment (CI)
-
----
-
-## Review Workflow
-
-Two review modes, same 4-stage pipeline, same skills, same state tracking:
-
-| Mode | Command | Best for |
-|------|---------|----------|
-| **Full (one shot)** | `/reviewiq-full <PR>` or `reviewiq full <PR>` | CI, quick reviews, automation — reviews all files, auto-posts to PR |
-| **Interactive** | `/reviewiq-pr <PR>` or `reviewiq pr <PR>` | Deep reviews — file-by-file, explain/fix/post per file |
-
-### Review Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     4-STAGE REVIEW PIPELINE                      │
-├─────────────┬──────────────┬──────────────┬─────────────────────┤
-│ 1. UNDERSTAND│ 2. ANALYZE   │ 3. ASSESS    │ 4. REPORT          │
-├─────────────┼──────────────┼──────────────┼─────────────────────┤
-│ Read files   │ Correctness  │ CRITICAL     │ Structured findings │
-│ Map intent   │ Edge cases   │ IMPORTANT    │ Concrete fixes      │
-│ Trace system │ Security     │ NIT          │ Impact analysis     │
-│ Read history │ Performance  │ QUESTION     │ Summary + assess    │
-│              │ Concurrency  │              │                     │
-│              │ Cross-file   │              │                     │
-└─────────────┴──────────────┴──────────────┴─────────────────────┘
-```
-
-### Finding Lifecycle
-
-Every finding is a tracked object with a full audit trail:
-
-```
-open ──→ resolved          developer fixed it
-     ──→ partially_fixed   partially addressed, needs more work
-     ──→ wontfix           developer won't fix, agent accepts reasoning
-     ──→ retracted         agent was wrong, or not actually an issue
-
-partially_fixed ──→ resolved | wontfix
-```
-
-Every transition recorded with: timestamp, round number, note.
-
-### Incremental Re-review
-
-After the developer pushes fixes, the agent knows exactly what to check:
-
-```
-📋 RE-REVIEW (Round 2)
-Changes since: abc1234...def5678
-
-FINDING STATUS UPDATES:
-┌────┬──────────┬──────────────────┬────────────────────────────────┐
-│ #  │ Severity │ Status Change    │ Note                           │
-├────┼──────────┼──────────────────┼────────────────────────────────┤
-│ 1  │ CRITICAL │ open → resolved  │ Backoff with jitter added      │
-│ 2  │ IMPORTANT│ open → partial   │ Retry limit added, no breaker  │
-│ 4  │ NIT      │ NEW              │ Typo in error message line 92  │
-└────┴──────────┴──────────────────┴────────────────────────────────┘
-
-Summary: 1 resolved, 1 partial, 1 new nit
-Assessment: REQUEST CHANGES → NEEDS DISCUSSION
-```
-
----
-
-## CLI Commands
-
-The Go binary for terminal and CI use. Requires `ANTHROPIC_API_KEY`.
-
-| Command | Purpose | State Change |
-|---------|---------|--------------|
-| `reviewiq full <PR>` | Full review, all files, auto-posts to PR | Creates findings + posts |
-| `reviewiq pr <PR>` | File-by-file interactive review | Creates findings per file |
-| `reviewiq init` | Initialize `.pr-review/` + `.claude/commands/` | Creates all files |
-| `reviewiq review <branch>` | Branch-based review (local) | Creates findings (open) |
-| `reviewiq check <branch>` | Incremental re-review | Updates finding statuses |
-| `reviewiq status` | Show finding status table | Read-only |
-| `reviewiq explain <N>` | Deep dive into finding N | Adds to discussion thread |
-| `reviewiq ask <question>` | Follow-up question | Adds to conversation |
-| `reviewiq resolve <N>` | Mark finding as resolved | Finding → resolved |
-| `reviewiq retract <N>` | Agent was wrong | Finding → retracted |
-| `reviewiq wontfix <N>` | Developer won't fix | Finding → wontfix |
-| `reviewiq approve` | Final blocker check | Assessment → APPROVE |
-| `reviewiq ci` | Run in CI mode | Both backends |
-
----
-
-## Skills System
-
-ReviewIQ auto-detects languages, frameworks, and domains from the PR's changed files and loads only the relevant expert checklists. This means focused reviews with minimal token waste.
-
-### How It Works
-
-```
-PR changes: src/payment/service.py, src/loan/emi.py, Dockerfile
-                          │
-                  Skill Detection
-                  (file extensions + imports)
-                          │
-    ┌─────────────────────┼──────────────────────┐
-    ▼                     ▼                      ▼
- Always (6):           Detected:              Domains:
- commandments          python (lang)          fintech
- security              django (framework)     india-regulatory
- scalability           docker (devops)        fraud
- stability
- maintainability
- performance
-                          │
-                          ▼
-              Only relevant skills loaded
-              (~5K tokens vs ~14K for all)
-```
-
-### Always Loaded (every review)
-
-| Skill | Rules | What it covers |
-|-------|-------|----------------|
-| **Commandments** | 40 | Correctness, security, reliability, performance, maintainability, data, APIs, testing |
-| **Security** | 50+ | Injection, auth, crypto, data protection, infra security, dependencies (OWASP-aligned) |
-| **Scalability** | 40+ | Database, caching, concurrency, network, compute, architecture patterns |
-| **Stability** | 35+ | Error handling, resilience (circuit breakers, bulkheads), observability, deployment safety |
-| **Maintainability** | 40+ | Complexity limits, naming, code organization, dependencies, testability, refactoring signals |
-| **Performance** | 45+ | Algorithms, memory, database, network/IO, CPU, frontend, caching, concurrency |
-
-### Auto-Detected: Languages & Frameworks
-
-| Skill | Triggers on | Key checks |
-|-------|-------------|------------|
-| **Languages** | `.py`, `.java`, `.go`, `.ts`, `.cpp`, `.rs`, `.cs`, `.rb`, `.php`, `.sh`, `.cob` | Anti-patterns, performance traps, concurrency pitfalls, type safety per language |
-| **Frameworks** | Django, FastAPI, Flask, Spring, React, Next.js, Express, NestJS, Vue, Angular, Rails, .NET | N+1 queries, missing auth, CSRF, XSS, framework-specific misuse |
-| **DevOps** | `Dockerfile`, `Chart.yaml`, `*.tf`, K8s manifests, CI configs | Container security, resource limits, Helm values, Terraform state, CI secrets |
-
-### Auto-Detected: Financial Services
-
-| Skill | Triggers on | Key checks |
-|-------|-------------|------------|
-| **Fintech** | stripe, razorpay, payment, loan, emi, insurance, ledger, kyc | Floating-point money, idempotency, PCI-DSS, EMI/APR calculation, double-entry bookkeeping |
-| **India Regulatory** | upi, nach, aadhaar, rbi, nbfc, ifsc, cersai | RBI digital lending, NBFC compliance, UPI/NEFT/RTGS, eKYC, Account Aggregator, GST |
-| **Credit Bureau** | cibil, experian, equifax, credit_score, bureau | Hard vs soft inquiry, data retention, score processing, bureau reporting, disputes |
-| **Fraud** | fraud, risk_engine, velocity, device_fingerprint | Velocity checks, ATO prevention, payment/lending fraud, ML model review, rule engines |
-| **Notifications** | sms, twilio, sendgrid, fcm, whatsapp, dlt | TRAI DND/DLT, RBI SMS mandates, email compliance, push, WhatsApp Business API |
-| **Financial Microservices** | saga, outbox, event_sourcing, kafka | Saga pattern, compensating transactions, transactional outbox, distributed consistency |
-| **Data Privacy** | gdpr, ccpa, dpdp, consent, pii, anonymiz | DPDP Act, GDPR, CCPA, PII detection, encryption, consent management, data deletion |
-
-### Customization
-
-Skills live in `.pr-review/skills/`. Edit them to add your team's domain rules:
-
-```bash
-# Add a custom rule
-echo "- **Custom Auth**: All endpoints must use our AuthMiddleware" >> .pr-review/skills/security.md
-
-# Add an entirely new skill
-cat > .pr-review/skills/mobile.md << 'EOF'
-# Mobile Review Rules
-- Missing offline support → IMPORTANT: app must work offline
-- Missing deep link handling → NIT: cold start from deep link
-EOF
-```
-
----
-
-## CI Integration
-
-### GitHub Actions (Automated)
-
-1. Add `ANTHROPIC_API_KEY` as a repository secret
-
-2. The workflow at `.github/workflows/pr-review.yml` handles:
-
-| Event | What happens | State |
-|-------|-------------|-------|
-| PR opened | Full 4-stage review posted as comment | Saved to hidden PR comment |
-| Push to PR | Incremental re-review (resolved/partial/new) | Updated in PR comment |
-| `@review-agent <question>` | Contextual reply with full history | Updated in PR comment |
-
-3. State survives across workflow runs — the agent remembers all prior findings and conversation.
-
-### Interaction via Comments
-
-```markdown
-# Developer asks about a finding:
-@review-agent why is finding 1 critical? our webhook volume is only 100/day
-
-# Agent replies with context:
-At 100/day normal volume, you're right. The risk is during incident recovery —
-if 500 webhooks queue up during a 2hr outage and all retry simultaneously,
-you get a thundering herd. At your volume, a simple 2s fixed delay suffices.
-
-# Developer asks for re-review:
-@review-agent check
-```
-
----
-
-## Command Cross-Reference
-
-Commands map 1:1 between Claude Code and CLI:
-
-| Action | Claude Code | CLI |
-|--------|-------------|-----|
-| Full PR review (one shot) | `/reviewiq-full <PR-link>` | `reviewiq full <PR-link>` |
-| File-by-file PR review | `/reviewiq-pr <PR-link>` | `reviewiq pr <PR-link> --post` |
-| Branch review (local) | `review this PR` | `reviewiq review <branch>` |
-| Re-review | `/reviewiq-check <branch>` | `reviewiq check <branch>` |
-| Status | `/reviewiq-status` | `reviewiq status` |
-| Explain | `/reviewiq-explain <N>` | `reviewiq explain <N>` |
-| Fix | `/reviewiq-fix <N>` | *(not in CLI — agent applies directly)* |
-| Ask | `/reviewiq-ask <question>` | `reviewiq ask <question>` |
-| Resolve | `/reviewiq-resolve <N> [note]` | `reviewiq resolve <N> --note "..."` |
-| Retract | `/reviewiq-retract <N> [reason]` | `reviewiq retract <N> --note "..."` |
-| Won't fix | `/reviewiq-wontfix <N> [reason]` | `reviewiq wontfix <N> --note "..."` |
-| Approve | `/reviewiq-approve` | `reviewiq approve` |
-| Summarize | `/reviewiq-summarize` | *(not in CLI)* |
-| Impact | `/reviewiq-impact` | *(not in CLI)* |
-| Test | `/reviewiq-test [N]` | *(not in CLI)* |
-| CI mode | *(not applicable)* | `reviewiq ci` |
-
-### Chaining Commands
-
-```bash
-# Claude Code — one shot (fastest)
-/reviewiq-full https://github.com/owner/repo/pull/42
-
-# Claude Code — interactive
-/reviewiq-pr https://github.com/owner/repo/pull/42
-/reviewiq-explain 2
-/reviewiq-fix 1
-/reviewiq-check feature/payment-retry
-/reviewiq-approve
-/reviewiq-summarize
-
-# CLI — one shot
-reviewiq full https://github.com/owner/repo/pull/42
-
-# CLI — interactive
-reviewiq pr 42 --post
-reviewiq explain 2
-reviewiq retract 3 --note "ORM handles it"
-reviewiq check feature/payment-retry
-reviewiq approve
-```
-
----
-
-## Token Optimization
-
-The skills system minimizes token usage through selective loading:
-
-| PR Type | Skills Loaded | Prompt Size | Savings vs All |
-|---------|--------------|-------------|----------------|
-| React component | 6 always + typescript + react | ~5,600 words | 60% |
-| Python API | 6 always + python + django | ~5,800 words | 58% |
-| Fintech full stack | 6 always + python + django + 5 domains | ~13,800 words | 0% (full) |
-| Dockerfile only | 6 always + docker | ~5,200 words | 63% |
-
-Skills use compressed checklist format — anti-pattern → severity → fix. No prose filler.
-
----
-
-## Finding Severity Levels
-
-| Severity | Meaning | Merge? |
-|----------|---------|--------|
-| `[CRITICAL]` | Bugs, data loss, security vulnerabilities, outages | Must fix |
-| `[IMPORTANT]` | Poor error handling, race conditions, performance issues | Should fix |
-| `[NIT]` | Style, naming, minor improvements | Won't block |
-| `[QUESTION]` | Looks odd, might be intentional. Needs clarification | Discuss |
 
 ---
 
 ## Configuration
 
-| Variable | Required for | Default | Description |
-|----------|-------------|---------|-------------|
-| `ANTHROPIC_API_KEY` | CLI + CI | — | Claude API key. **Not needed for Claude Code slash commands.** |
-| `MODEL` | CLI + CI | `claude-sonnet-4-6-20250514` | Claude model |
-| `MAX_TOKENS` | CLI + CI | `8192` | Max response tokens |
-| `GITHUB_TOKEN` | CLI (`full`, `pr`) + CI | — | GitHub token. Auto-provided in Actions. For CLI: `export GITHUB_TOKEN=ghp_...` |
+| Variable | Required for | Description |
+|----------|-------------|-------------|
+| `ANTHROPIC_API_KEY` | CLI only | **Not needed for Claude Code.** |
+| `GITHUB_TOKEN` | CLI + posting to PR | Auto-configured during install via `gh auth`. |
 
 ---
 
 ## File Structure
 
-### Installed Globally (by install.sh)
-
 ```
-~/.local/bin/
-  reviewiq                      CLI binary
-  riq                           Shorthand symlink
-~/.reviewiq/
-  agent.md                      Review protocol
-  skills/                       16 skill modules (global defaults)
-~/.claude/
-  REVIEWIQ.md                   Claude Code global config (natural language commands)
-```
+# Installed globally
+~/.local/bin/reviewiq             CLI binary
+~/.reviewiq/skills/               16 skill modules
+~/.claude/REVIEWIQ.md             Claude Code global config
 
-### Repository (source code)
-
-```
-cmd/reviewiq/
-  main.go                       CLI entry point (cobra commands)
-internal/
-  state/state.go                State manager (types, lifecycle, dual backend)
-  engine/engine.go              Review engine (Claude API, structured output)
-  git/git.go                    Git operations
-  skills/skills.go              Skill auto-detection and loading
-  github/github.go              GitHub API (PR fetch, inline comments, suggestions)
-  ci/ci.go                      CI mode (GitHub Actions webhook handler)
+# Per-repo (created on first review)
 .pr-review/
-  agent.md                      Review protocol (customize per repo)
-  skills/                       16 skill modules (customize per repo)
-    commandments.md             40 universal review laws
-    security.md                 OWASP-aligned security checks
-    scalability.md              Performance and scaling patterns
-    stability.md                Reliability and observability
-    maintainability.md          Code quality and complexity
-    performance.md              Profiling and optimization
-    languages.md                12 language anti-pattern libraries
-    frameworks.md               14 framework rule sets
-    devops.md                   Docker/K8s/Helm/Terraform/CI-CD
-    fintech.md                  Payments/lending/insurance/compliance
-    india-regulatory.md         RBI/NBFC/UPI/eKYC/NACH/GST
-    credit-bureau.md            CIBIL/Experian/Equifax integration
-    fraud.md                    Fraud detection and prevention
-    notifications.md            SMS/email/push/WhatsApp compliance
-    financial-microservices.md  Saga/outbox/distributed transactions
-    data-privacy.md             DPDP/GDPR/CCPA compliance
-.claude/commands/               14 Claude Code slash commands
-  reviewiq-full.md                /reviewiq-full <PR> — one-shot full review + post
-  reviewiq-pr.md                  /reviewiq-pr <PR> — file-by-file interactive
-  reviewiq-check.md               /reviewiq-check <branch>
-  reviewiq-explain.md             /reviewiq-explain <N>
-  reviewiq-fix.md                 /reviewiq-fix <N>
-  reviewiq-status.md              /reviewiq-status
-  reviewiq-ask.md                 /reviewiq-ask <question>
-  reviewiq-resolve.md             /reviewiq-resolve <N> [note]
-  reviewiq-retract.md             /reviewiq-retract <N> [reason]
-  reviewiq-wontfix.md             /reviewiq-wontfix <N> [reason]
-  reviewiq-approve.md             /reviewiq-approve
-  reviewiq-summarize.md           /reviewiq-summarize
-  reviewiq-impact.md              /reviewiq-impact
-  reviewiq-test.md                /reviewiq-test [N]
-.github/workflows/
-  pr-review.yml                 GitHub Actions workflow
-go.mod                          Go module definition
-go.sum                          Dependency checksums
-install.sh                      One-line installer
-uninstall.sh                    One-line uninstaller
-```
+  pr-42/                          Review state + reports per PR
+    state.json
+    round-1/report.md
+    history.md
 
----
-
-## Development
-
-```bash
-git clone https://github.com/Sanmanchekar/reviewiq.git
-cd reviewiq
-go build -o reviewiq ./cmd/reviewiq/
-./reviewiq --version
+# Source code
+cmd/reviewiq/main.go              CLI (Go + cobra)
+internal/
+  state/ engine/ git/ skills/ github/ ci/
+.claude/commands/
+  reviewiq-full.md                /reviewiq-full
+  reviewiq-pr.md                  /reviewiq-pr
+  reviewiq-recheck.md             /reviewiq-recheck
+.pr-review/skills/                16 skill files
+install.sh                        One-line installer
+uninstall.sh                      One-line uninstaller
 ```
 
 ---

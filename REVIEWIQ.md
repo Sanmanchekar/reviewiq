@@ -1,222 +1,164 @@
 # ReviewIQ — Global PR Review Agent
 
-When the user asks to "review this PR", "review PR", "review code", "reviewiq-full", "reviewiq-pr", "check review", or any review-related request, activate ReviewIQ.
+When the user asks to review a PR, review code, or uses reviewiq commands, activate ReviewIQ.
+
+## 3 Commands
+
+| Command | What it does |
+|---------|-------------|
+| `reviewiq-full <input>` | Full review, all files at once, auto-posts to PR |
+| `reviewiq-pr <input>` | File-by-file interactive — show findings, user confirms post/skip per file |
+| `reviewiq-recheck <input>` | Re-review with history — auto-resolve fixed findings, flag new issues |
+
+**Input**: PR link (`https://github.com/owner/repo/pull/42`), PR number (`42`), or branch (`feature/xyz`).
+
+**Natural language also works**:
+- "review this PR" / "review this PR to develop" → acts like reviewiq-full on current branch
+- "recheck" / "check again" → acts like reviewiq-recheck
 
 ## Input Detection
 
-| User input | Action |
-|------------|--------|
-| `reviewiq-full <PR-link>` / `reviewiq-full <number>` | Full review, all files at once, auto-post inline comments + suggestions to PR |
-| `reviewiq-pr <PR-link>` / `reviewiq-pr <number>` | File-by-file interactive review, post per file |
-| `review this PR` / `review this PR to develop` | Review current branch diff (no PR link needed) |
-| Any GitHub PR link pasted | Auto-detect as PR review request |
-
-### PR Link Handling
-
-When a GitHub PR link is provided (`https://github.com/owner/repo/pull/42`):
-1. Parse owner, repo, PR number from URL
-2. Fetch PR data using **whichever method is available** (try in order):
-
-**Method A — gh CLI** (if installed):
 ```bash
-gh pr view <number> --repo owner/repo --json files,title,author,baseRefName,headRefName
-gh pr diff <number> --repo owner/repo
+# PR link → parse owner/repo/number from URL
+# PR number → detect owner/repo from git remote
+# Branch → diff against main/master
 ```
 
-**Method B — GitHub API via curl** (fallback, needs GITHUB_TOKEN):
+Fetch via `gh` CLI (preferred) or GitHub API curl (fallback):
 ```bash
-# PR metadata
-curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/pulls/<number>
-
-# Changed files with diffs
-curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/pulls/<number>/files
-
-# Full file content
-curl -sH "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/contents/<filepath>?ref=<head_sha>
+gh pr view <N> --repo owner/repo --json files,title,author,baseRefName,headRefName,headRefOid
+gh pr diff <N> --repo owner/repo
 ```
 
-**Method C — git clone** (fallback, no token needed for public repos):
-```bash
-git clone --depth 1 --branch <head_branch> https://github.com/owner/repo.git /tmp/reviewiq-pr-<number>
-cd /tmp/reviewiq-pr-<number>
-git diff origin/<base_branch>...HEAD
+## Review Folder Structure
+
+Each review gets a persistent folder with iteration tracking:
+
+```
+.pr-review/
+  pr-42/                        # or branch-feature-xyz/
+    state.json                  # master state: all findings + statuses
+    round-1/
+      report.md                 # iteration 1 markdown report
+    round-2/
+      report.md                 # iteration 2 markdown report
+    history.md                  # running log of all rounds
 ```
 
-Try Method A first. If `gh` is not installed, try Method B. If no token, try Method C.
-
-### Full Review Mode (review-full)
-
-Reviews ALL files at once with cross-file analysis, then auto-posts:
-1. Fetch all diffs and file contents
-2. Load ALL relevant skills across all files
-3. Run 4-stage review with cross-file analysis
-4. Post inline comments with ```suggestion blocks on each finding line
-5. Post summary comment with finding table and assessment
-6. Save state
-
-### File-by-File Mode (review-pr)
-
-Reviews one file at a time for deeper analysis:
-1. Show file list, then for each file:
-   - Show diff
-   - Load only that file's relevant skills
-   - Review single file
-   - Post inline comments for that file
-   - Ask user: next / explain N / fix N / skip
-2. After all files, post summary
-3. Save state
-
-## Branch Detection (when no PR link)
-
-1. **FROM branch** (head): Current checked-out branch via `git rev-parse --abbrev-ref HEAD`
-2. **TO branch** (base/target):
-   - If user specifies: use that (e.g., "review this PR to develop")
-   - If not specified: auto-detect via `git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`
-   - Fallback: `main`, then `master`
-
-3. If FROM branch equals TO branch, tell the user:
-   "You're on the base branch. Checkout your feature branch first:
-    git checkout feature/your-branch"
-
-## Commands (respond to natural language)
-
-| User says | Action |
-|-----------|--------|
-| "reviewiq-full <PR-link>" / "reviewiq-full <number>" | Full review, all files, auto-post to PR |
-| "reviewiq-pr <PR-link>" / "reviewiq-pr <number>" | File-by-file interactive review |
-| "review this PR" / "review PR" / "review to main" | Full 4-stage review (branch-based) |
-| "review check" / "check review" / "re-review" | Incremental re-review after fixes |
-| "explain finding N" / "explain #N" | Deep dive into finding N |
-| "fix finding N" / "fix #N" | Apply the suggested fix |
-| "review status" / "show findings" | Finding status table |
-| "retract N" / "retract finding N" | Retract (agent was wrong) |
-| "wontfix N" / "won't fix N" | Mark as won't fix |
-| "resolve N" / "mark N resolved" | Mark as resolved |
-| "approve" / "final check" | Check for remaining blockers |
-| "summarize PR" / "PR summary" | Generate merge commit summary |
-| "blast radius" / "impact analysis" | Trace what could break |
-| "generate tests" / "test finding N" | Generate test cases |
-
-## Review Protocol
-
-### Step 1: Context Assembly
-
-```bash
-HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-BASE_BRANCH=<user-specified or auto-detected>
-
-echo "Reviewing: $HEAD_BRANCH → $BASE_BRANCH"
-git log --oneline $BASE_BRANCH..$HEAD_BRANCH
-git diff $BASE_BRANCH...$HEAD_BRANCH
-git diff --name-only $BASE_BRANCH...$HEAD_BRANCH
-```
-
-Read ALL changed files in full. For key symbols, trace with `git grep -n <symbol>`.
-
-### Step 2: Load Skills
-
-Check for skills in this order (first found wins per skill):
-1. `.pr-review/skills/` (repo-level — team customizations)
-2. `~/.reviewiq/skills/` (global — installed defaults)
-
-**Always load**: `commandments.md`, `security.md`, `scalability.md`, `stability.md`, `maintainability.md`, `performance.md`
-
-**Load by file type** (only matching sections):
-- `.py` → Python from `languages.md`, check for django/fastapi/flask in `frameworks.md`
-- `.ts/.js` → TypeScript from `languages.md`, check for react/nextjs/express/nestjs/vue/angular in `frameworks.md`
-- `.go` → Golang from `languages.md`
-- `.java` → Java from `languages.md`, check for spring in `frameworks.md`
-- `.rs` → Rust, `.cs` → C#, `.rb` → Ruby, `.cpp/.c` → C++, `.php` → PHP, `.sh` → Shell
-- `Dockerfile` / `Chart.yaml` / `*.tf` / CI configs → matching section from `devops.md`
-
-**Load by domain** (if imports/filenames match):
-- payment/stripe/razorpay/loan/emi/insurance/ledger/kyc → `fintech.md`
-- upi/nach/aadhaar/rbi/nbfc/ifsc → `india-regulatory.md`
-- cibil/experian/credit_score/bureau → `credit-bureau.md`
-- fraud/risk_engine/velocity/device_fingerprint → `fraud.md`
-- sms/twilio/sendgrid/whatsapp/fcm/dlt → `notifications.md`
-- saga/outbox/event_sourcing/kafka → `financial-microservices.md`
-- gdpr/ccpa/dpdp/consent/pii/anonymiz → `data-privacy.md`
-
-If no skills directory exists, review using built-in knowledge.
-
-### Step 3: 4-Stage Review
-
-**Stage 1 — Understand**: Read files, map intent, trace system context
-**Stage 2 — Analyze**: Check against skill checklists for anti-patterns
-**Stage 3 — Assess**: Classify each finding:
-  - `[CRITICAL]` — bugs, data loss, security vulnerabilities. Must fix.
-  - `[IMPORTANT]` — poor error handling, race conditions, perf issues. Should fix.
-  - `[NIT]` — style, naming, minor improvements. Won't block.
-  - `[QUESTION]` — looks odd, might be intentional. Needs clarification.
-
-**Stage 4 — Report**: For each finding:
-```
-### Finding <N>: <title>
-**Severity**: [CRITICAL/IMPORTANT/NIT/QUESTION]
-**File**: `path/to/file:line`
-**Status**: open
-
-**Problem**: What's wrong and why it matters.
-**Impact**: What breaks.
-**Suggested fix**:
-<concrete code fix>
-**Why this fix**: Rationale.
-```
-
-End with summary: files changed, finding counts, assessment (APPROVE / REQUEST CHANGES / NEEDS DISCUSSION).
-
-### Step 4: Save State
-
-Create `.pr-review/reviews/` in the repo if it doesn't exist.
-Write findings to `.pr-review/reviews/pr-<N>.json`:
-
+### state.json Schema
 ```json
 {
-  "version": 2,
-  "pr": { "number": 0, "repo": "", "title": "", "author": "", "base_branch": "", "head_branch": "" },
-  "review_rounds": [{ "round": 1, "timestamp": "ISO8601", "head_sha": "", "base_sha": "", "event": "review", "files_reviewed": [] }],
+  "pr": { "number": 42, "repo": "owner/repo", "title": "", "author": "", "base": "", "head": "" },
+  "current_round": 2,
+  "last_reviewed_sha": "abc123",
   "findings": {
     "1": {
-      "id": 1, "title": "", "severity": "", "status": "open",
-      "file": "", "line": 0, "problem": "", "impact": "",
-      "suggested_fix": "", "fix_rationale": "",
-      "created_round": 1, "created_at": "", "updated_at": "",
-      "status_history": [{ "status": "open", "round": 1, "timestamp": "" }],
-      "discussion": []
+      "id": 1,
+      "severity": "CRITICAL",
+      "status": "pending",
+      "file": "src/retry.py",
+      "line": 42,
+      "title": "Retry without backoff",
+      "problem": "...",
+      "suggestion": "time.sleep(min(2 ** attempt * 0.5, 30))",
+      "resolution": "Add exponential backoff with jitter",
+      "comment": "At 500 queued webhooks...",
+      "created_round": 1,
+      "resolved_round": null,
+      "history": [
+        { "round": 1, "status": "pending", "note": "Initial finding" },
+        { "round": 2, "status": "resolved", "note": "Backoff added" }
+      ]
     }
   },
-  "conversation": [],
-  "summary": { "total_findings": 0, "open": 0, "resolved": 0, "wontfix": 0, "retracted": 0, "assessment": "PENDING", "last_reviewed_sha": "" }
+  "summary": { "total": 3, "pending": 1, "resolved": 2, "skipped": 0 }
 }
 ```
 
-## Finding Lifecycle
+### Finding Statuses
+- `pending` — found, not yet fixed
+- `resolved` — fix confirmed in code
+- `skipped` — user chose to skip (won't post)
+- `needs-review` — code changed but not per suggestion
 
+## Skills Loading (Token Optimization)
+
+Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
+
+**Always load** (6): commandments, security, scalability, stability, maintainability, performance
+
+**Per-file detection** (load only matching SECTIONS, not full files):
+- File extension → language section from languages.md
+- Import scanning → framework section from frameworks.md
+- Filename patterns → devops.md, fintech.md, fraud.md, etc.
+
+**Token budget**:
+- reviewiq-full: ~5-8K words (all files, all relevant skills)
+- reviewiq-pr: ~2-3K words per file (only that file's skills)
+- reviewiq-recheck: ~1-2K words (only changed files + state context)
+
+## reviewiq-full Flow
+
+1. Fetch all diffs + file contents
+2. Load all relevant skills across all files
+3. Review with cross-file analysis
+4. Post inline comments with ```suggestion blocks
+5. Post summary comment
+6. Save state.json + round-N/report.md + history.md
+
+## reviewiq-pr Flow
+
+For each file:
+1. Load skills for THIS file only
+2. Review single file against skills
+3. **If findings**: show suggestion + resolution + comment, ask user:
+   - `P` (post) — post inline comments for this file
+   - `S` (skip) — skip, move to next
+   - `F <N>` (fix) — apply suggestion N
+4. **If no findings**: auto-move to next file (no prompt)
+5. After all files: post summary, save state + report
+
+## reviewiq-recheck Flow
+
+1. Load previous state.json
+2. Fetch current code
+3. For each pending finding:
+   - Code fixed? → auto-resolve
+   - Still broken? → keep pending
+   - Changed differently? → needs-review
+4. Check new changes for new issues
+5. Post update to PR
+6. Save updated state + new round report
+
+## Report Format (round-N/report.md)
+
+```markdown
+# ReviewIQ Report — PR #42 Round 1
+**Date**: 2026-04-15
+**Skills**: commandments, security, python, django (~4.2K words)
+**Files**: 4 | **Findings**: 3
+
+## Findings
+### 1. [CRITICAL] Retry without backoff — `retry.py:42` — pending
+**Problem**: ...
+**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
+**Resolution**: Add exponential backoff
+**Comment**: Thundering herd risk
+
+## Summary
+| Status | Count |
+|--------|-------|
+| Pending | 3 |
+| Resolved | 0 |
+Assessment: REQUEST CHANGES
 ```
-open → resolved         (developer fixed it)
-     → partially_fixed  (partially addressed)
-     → wontfix          (developer won't fix, reasoning accepted)
-     → retracted        (agent was wrong)
-```
-
-Every transition: update status, append to status_history with timestamp + note, recompute summary.
-
-## Incremental Re-review (check)
-
-1. Load state — know what SHA was last reviewed
-2. Diff only changes since last review
-3. For each existing finding: RESOLVED / PARTIALLY FIXED / UNRESOLVED
-4. Check for NEW issues from the fixes
-5. Update state, output status table
 
 ## Rules
 
 1. Never hallucinate file contents — always read the file
-2. Concrete fixes only — copy-pasteable code, not "consider using..."
+2. Concrete suggestions only — exact replacement code for ```suggestion blocks
 3. Match repo conventions
-4. Engage with pushback — developer knows the codebase
-5. Severity honesty — don't inflate or downplay
-6. No style bikeshedding — focus on logic, correctness, design
-7. Cross-file awareness — check if changes break assumptions elsewhere
-8. State is truth — always load before acting, save after
+4. Auto-skip files with no findings (no unnecessary prompts)
+5. Token efficiency — load only relevant skill sections per file
+6. State is truth — always save after every action
+7. Reports are markdown — human-readable iteration history

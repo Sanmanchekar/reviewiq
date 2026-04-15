@@ -1,70 +1,67 @@
-Full PR review in one shot — review all files, post comments, suggestions, and resolutions: $ARGUMENTS
+Full PR review — all files, post everything to PR: $ARGUMENTS
 
-$ARGUMENTS: GitHub PR link (e.g., `https://github.com/owner/repo/pull/42`) or PR number.
+$ARGUMENTS: PR link (`https://github.com/owner/repo/pull/42`), PR number (`42`), or branch (`feature/xyz`).
 
-Unlike `/reviewiq-pr` (file-by-file interactive), this reviews the entire diff at once and posts everything to the PR automatically.
-
-## Step 1: Fetch PR
+## 1. Detect Input & Fetch
 
 ```bash
-# Get PR metadata and diff
-gh pr view <number> --json title,author,baseRefName,headRefName,files
-gh pr diff <number>
+# PR link or number
+gh pr view <N> --repo owner/repo --json files,title,author,baseRefName,headRefName,number,body,headRefOid
+gh pr diff <N> --repo owner/repo
+
+# Branch (no PR)
+git diff main...<branch>
+git diff --name-only main...<branch>
 ```
 
-## Step 2: Load ALL Relevant Skills
+## 2. Create Review Folder
 
-Detect skills across ALL changed files at once:
-- Always load: `commandments.md`, `security.md`, `scalability.md`, `stability.md`, `maintainability.md`, `performance.md`
-- By file types: load matching sections from `languages.md`, `frameworks.md`, `devops.md`
-- By domain: load matching domain skills (`fintech.md`, `fraud.md`, etc.)
-
-Skills from: `.pr-review/skills/` (repo) → `~/.reviewiq/skills/` (global fallback)
-
-## Step 3: Full Review
-
-Read ALL changed files in full. Review the entire diff against loaded skills:
-
-1. **Per-file analysis**: correctness, edge cases, security, performance per skill checklists
-2. **Cross-file analysis**: do changes in file A break assumptions in file B? Missing migrations? Inconsistent error handling?
-3. **Test coverage**: are all changed paths covered by tests in the PR?
-
-For each finding:
-- Exact file path and line number
-- Severity: CRITICAL / IMPORTANT / NIT / QUESTION
-- Concrete fix as exact replacement code (for GitHub ```suggestion blocks)
-- Resolution recommendation
-
-## Step 4: Post to PR
-
-Post everything to the PR using `gh` CLI:
-
-**Summary comment** with finding table:
-```bash
-gh pr comment <number> --body "## ReviewIQ Full Review
-| # | Severity | File | Finding |
-|---|----------|------|---------|
-| 1 | CRITICAL | retry.py:42 | Retry without backoff |
-..."
+Create `.pr-review/pr-<N>/` (or `.pr-review/branch-<name>/`):
+```
+.pr-review/
+  pr-42/
+    state.json          # findings with status: pending/resolved
+    round-1/
+      report.md         # markdown report for this iteration
+    history.md          # running log across rounds
 ```
 
-**Inline comments** with suggestion blocks on each finding:
-```bash
-gh api repos/{owner}/{repo}/pulls/{number}/comments \
-  -f body="**[CRITICAL] Retry without backoff**
-...
-\`\`\`suggestion
-time.sleep(min(2 ** attempt * 0.5, 30) + random.uniform(0, 1))
-\`\`\`" \
-  -f path="src/webhooks/retry.py" -F line=42 -f side="RIGHT" \
-  -f commit_id="$(gh pr view <number> --json headRefOid -q .headRefOid)"
+If folder exists from previous review, increment round number.
+
+## 3. Load Skills (token-efficient)
+
+From `~/.reviewiq/skills/` or `.pr-review/skills/`:
+- **Always** (6): commandments, security, scalability, stability, maintainability, performance
+- **By extension**: only matching section from languages.md (e.g., Python section only)
+- **By imports**: only matching section from frameworks.md (e.g., Django section only)
+- **By domain**: fintech.md, fraud.md, etc. only if triggered
+
+Log: "Skills loaded: X, Y, Z (~N words)"
+
+## 4. Review All Files
+
+Read full diff + all file contents. 4-stage review:
+- Understand → Analyze (against skill checklists) → Assess → Report
+
+For each finding output:
+```
+### Finding <N>: <title>
+**Severity**: CRITICAL / IMPORTANT / NIT / QUESTION
+**File**: `path:line`
+**Status**: pending
+**Problem**: ...
+**Suggestion**: (exact replacement code for ```suggestion block)
+**Resolution**: how to fix it
+**Comment**: additional context
 ```
 
-## Step 5: Save State
+## 5. Post to PR
 
-Save to `.pr-review/reviews/pr-<N>.json`.
+Post each finding as inline comment with ```suggestion block.
+Post summary comment with finding table + assessment.
 
-After this, the user can:
-- `explain finding N` — deep dive
-- `check review` — re-review after fixes
-- `approve` — final check
+## 6. Save State & Report
+
+`state.json`: all findings with `status: "pending"`.
+`round-N/report.md`: full markdown report with date, skills used, all findings.
+`history.md`: append this round's summary.
