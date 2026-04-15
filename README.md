@@ -81,14 +81,14 @@ The installer sets up everything globally — binary, skills (`~/.reviewiq/skill
 /reviewiq-full https://github.com/owner/repo/pull/42
 
 # File-by-file interactive review
-/review-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr https://github.com/owner/repo/pull/42
 
 # Or review current branch
 review this PR                              # auto-detects: current branch → main
 review this PR to develop                   # explicit target branch
 
 # After review, continue naturally:
-next                                        # move to next file (review-pr mode)
+next                                        # move to next file (reviewiq-pr mode)
 explain finding 2                           # deep dive
 fix finding 1                               # applies the fix
 post                                        # post findings as PR inline comments
@@ -241,8 +241,8 @@ Two review modes, same 4-stage pipeline, same skills, same state tracking:
 
 | Mode | Command | Best for |
 |------|---------|----------|
-| **Full (one shot)** | `review-full <PR>` | CI, quick reviews, automation — reviews all files, auto-posts to PR |
-| **Interactive** | `review-pr <PR>` | Deep reviews — file-by-file, explain/fix/post per file |
+| **Full (one shot)** | `/reviewiq-full <PR>` or `reviewiq full <PR>` | CI, quick reviews, automation — reviews all files, auto-posts to PR |
+| **Interactive** | `/reviewiq-pr <PR>` or `reviewiq pr <PR>` | Deep reviews — file-by-file, explain/fix/post per file |
 
 ### Review Pipeline
 
@@ -460,7 +460,7 @@ Commands map 1:1 between Claude Code and CLI:
 /reviewiq-full https://github.com/owner/repo/pull/42
 
 # Claude Code — interactive
-/review-pr https://github.com/owner/repo/pull/42
+/reviewiq-pr https://github.com/owner/repo/pull/42
 /reviewiq-explain 2
 /reviewiq-fix 1
 /reviewiq-check feature/payment-retry
@@ -513,7 +513,7 @@ Skills use compressed checklist format — anti-pattern → severity → fix. No
 | `ANTHROPIC_API_KEY` | CLI + CI | — | Claude API key. **Not needed for Claude Code slash commands.** |
 | `MODEL` | CLI + CI | `claude-sonnet-4-6-20250514` | Claude model |
 | `MAX_TOKENS` | CLI + CI | `8192` | Max response tokens |
-| `GITHUB_TOKEN` | CLI (`review-full`, `review-pr`) + CI | — | GitHub token. Auto-provided in Actions. For CLI: `export GITHUB_TOKEN=ghp_...` |
+| `GITHUB_TOKEN` | CLI (`full`, `pr`) + CI | — | GitHub token. Auto-provided in Actions. For CLI: `export GITHUB_TOKEN=ghp_...` |
 
 ---
 
@@ -565,7 +565,7 @@ internal/
     data-privacy.md             DPDP/GDPR/CCPA compliance
 .claude/commands/               14 Claude Code slash commands
   reviewiq-full.md                /reviewiq-full <PR> — one-shot full review + post
-  reviewiq-pr.md                  /review-pr <PR> — file-by-file interactive
+  reviewiq-pr.md                  /reviewiq-pr <PR> — file-by-file interactive
   reviewiq-check.md               /reviewiq-check <branch>
   reviewiq-explain.md             /reviewiq-explain <N>
   reviewiq-fix.md                 /reviewiq-fix <N>
