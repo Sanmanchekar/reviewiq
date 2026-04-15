@@ -108,13 +108,13 @@ install_binary() {
     trap "rm -rf $tmp" EXIT
 
     step "Cloning repository..."
-    if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$tmp/reviewiq"; then
+    if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$tmp/reviewiq" </dev/null; then
         error "Failed to clone $REPO_URL. Check your network connection."
     fi
 
     step "Building binary..."
     cd "$tmp/reviewiq"
-    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/
+    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/ </dev/null
     chmod +x "$INSTALL_DIR/$BINARY"
     ln -sf "$INSTALL_DIR/$BINARY" "$INSTALL_DIR/riq"
 
