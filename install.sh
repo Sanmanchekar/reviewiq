@@ -3,7 +3,7 @@
 # ReviewIQ Installer
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh -o /tmp/reviewiq-install.sh && bash /tmp/reviewiq-install.sh
+#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 #
 # What it does:
 #   1. Builds and installs the Go binary to ~/.local/bin
@@ -108,13 +108,13 @@ install_binary() {
     trap "rm -rf $tmp" EXIT
 
     step "Cloning repository..."
-    if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$tmp/reviewiq" </dev/null; then
+    if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$tmp/reviewiq"; then
         error "Failed to clone $REPO_URL. Check your network connection."
     fi
 
     step "Building binary..."
     cd "$tmp/reviewiq"
-    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/ </dev/null
+    go build -o "$INSTALL_DIR/$BINARY" ./cmd/reviewiq/
     chmod +x "$INSTALL_DIR/$BINARY"
     ln -sf "$INSTALL_DIR/$BINARY" "$INSTALL_DIR/riq"
 
@@ -277,4 +277,5 @@ main() {
     verify
 }
 
-main
+# </dev/null prevents git/go from hanging when script is piped via curl | bash
+main </dev/null

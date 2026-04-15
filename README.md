@@ -43,7 +43,7 @@ ReviewIQ is a stateful PR review agent that carries domain expertise as loadable
 ### Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh -o /tmp/reviewiq-install.sh && bash /tmp/reviewiq-install.sh
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
 Or with Go:
@@ -65,10 +65,10 @@ ln -s /usr/local/bin/reviewiq /usr/local/bin/riq
 
 ```bash
 # Update (same as install — overwrites the binary)
-curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh -o /tmp/reviewiq-install.sh && bash /tmp/reviewiq-install.sh
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 
 # Uninstall
-curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh -o /tmp/reviewiq-uninstall.sh && bash /tmp/reviewiq-uninstall.sh
+curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh | bash
 ```
 
 ### Usage

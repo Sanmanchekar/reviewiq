@@ -3,7 +3,7 @@
 # ReviewIQ Uninstaller
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh -o /tmp/reviewiq-uninstall.sh && bash /tmp/reviewiq-uninstall.sh
+#   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall.sh | bash
 #
 
 set -euo pipefail
