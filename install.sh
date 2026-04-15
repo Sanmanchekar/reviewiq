@@ -54,6 +54,97 @@ check_git() {
     fi
 }
 
+install_gh() {
+    if command -v gh &>/dev/null; then
+        info "Found gh $(gh --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')"
+        return
+    fi
+
+    step "Installing GitHub CLI (gh)..."
+    local os arch gh_installed=false
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    arch="$(uname -m)"
+
+    case "$arch" in
+        x86_64|amd64) arch="amd64" ;;
+        arm64|aarch64) arch="arm64" ;;
+        *) arch="amd64" ;;
+    esac
+
+    case "$os" in
+        darwin)
+            if command -v brew &>/dev/null; then
+                brew install gh 2>&1 | tail -3 || true
+                gh_installed=true
+            else
+                # Direct download for macOS without brew
+                local gh_ver
+                gh_ver=$(curl -sSL https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/' || echo "2.89.0")
+                local gh_url="https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_macOS_${arch}.zip"
+                local gh_tmp="$(mktemp -d)"
+                curl -sSL "$gh_url" -o "$gh_tmp/gh.zip"
+                unzip -q "$gh_tmp/gh.zip" -d "$gh_tmp"
+                cp "$gh_tmp"/gh_*/bin/gh "$INSTALL_DIR/gh"
+                chmod +x "$INSTALL_DIR/gh"
+                rm -rf "$gh_tmp"
+                gh_installed=true
+            fi
+            ;;
+        linux)
+            if command -v apt-get &>/dev/null; then
+                # Debian/Ubuntu
+                local gh_ver
+                gh_ver=$(curl -sSL https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/' || echo "2.89.0")
+                local gh_url="https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_linux_${arch}.deb"
+                local gh_tmp="$(mktemp -d)"
+                curl -sSL "$gh_url" -o "$gh_tmp/gh.deb"
+                sudo dpkg -i "$gh_tmp/gh.deb" 2>/dev/null || sudo apt-get install -f -y 2>/dev/null
+                rm -rf "$gh_tmp"
+                gh_installed=true
+            elif command -v yum &>/dev/null; then
+                # RHEL/CentOS
+                local gh_ver
+                gh_ver=$(curl -sSL https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/' || echo "2.89.0")
+                local gh_url="https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_linux_${arch}.rpm"
+                local gh_tmp="$(mktemp -d)"
+                curl -sSL "$gh_url" -o "$gh_tmp/gh.rpm"
+                sudo yum install -y "$gh_tmp/gh.rpm" 2>/dev/null || true
+                rm -rf "$gh_tmp"
+                gh_installed=true
+            elif command -v dnf &>/dev/null; then
+                # Fedora
+                sudo dnf install -y gh 2>/dev/null || true
+                gh_installed=true
+            else
+                # Generic Linux — download binary directly
+                local gh_ver
+                gh_ver=$(curl -sSL https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/' || echo "2.89.0")
+                local gh_url="https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_linux_${arch}.tar.gz"
+                local gh_tmp="$(mktemp -d)"
+                curl -sSL "$gh_url" -o "$gh_tmp/gh.tar.gz"
+                tar -xzf "$gh_tmp/gh.tar.gz" -C "$gh_tmp"
+                cp "$gh_tmp"/gh_*/bin/gh "$INSTALL_DIR/gh"
+                chmod +x "$INSTALL_DIR/gh"
+                rm -rf "$gh_tmp"
+                gh_installed=true
+            fi
+            ;;
+    esac
+
+    if command -v gh &>/dev/null; then
+        info "Installed gh $(gh --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')"
+        if ! gh auth status &>/dev/null; then
+            warn "gh installed but not authenticated. Run: gh auth login"
+        fi
+    elif $gh_installed; then
+        warn "gh installed to $INSTALL_DIR but may need PATH refresh."
+        warn "Restart terminal or run: source $SHELL_RC"
+    else
+        warn "Could not install gh CLI. Install manually: https://cli.github.com"
+        warn "ReviewIQ will fall back to curl + GITHUB_TOKEN for PR reviews."
+    fi
+}
+
 detect_shell_rc() {
     local shell_name
     shell_name="$(basename "${SHELL:-/bin/bash}")"
@@ -269,6 +360,7 @@ main() {
 
     check_git
     check_go
+    install_gh
     cleanup_old
     install_binary
     setup_path
