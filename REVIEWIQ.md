@@ -177,19 +177,21 @@ For each file:
 
 **THIS COMMAND WRITES CODE. It edits source files directly to apply fixes.**
 
-1. Load state from GitHub PR hidden comment (or conversation history)
-2. For EACH pending/open finding:
+1. Checkout the PR branch: `gh pr checkout <N>`
+2. Load state from GitHub PR hidden comment (or conversation history)
+3. For EACH pending/open finding:
    a. Read the target file using the Read tool
    b. Locate the problematic code at the finding's line number
    c. **EDIT the file** — use the Edit tool to replace the broken code with `suggested_fix`
    d. If `suggested_fix` is unclear, write the correct fix using your judgment
    e. Mark the finding as `resolved` in state
-3. **RUN TESTS** — detect test framework, run tests for modified files, fix until green
-4. **SAVE STATE** — update the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment (mark all findings resolved)
-5. Post resolution report as PR comment listing every fix applied + test results
-6. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"`
+4. **RUN TESTS** — detect test framework, run tests for modified files, fix until green. If no tests: run linter (flake8/mypy/eslint/tsc). If no linter: at minimum syntax checks.
+5. **COMMIT AND PUSH** — `git add`, `git commit -m "fix: resolve ReviewIQ findings"`, `git push`. Without push, the PR still has broken code and approval is meaningless.
+6. **SAVE STATE** — update the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment (mark all findings resolved)
+7. Post resolution report as PR comment listing every fix applied + test results
+8. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"`
 
-**Key**: resolve = APPLY fixes + RUN TESTS + SAVE STATE + approve. NOT verify-only.
+**Key**: resolve = checkout + APPLY fixes + RUN TESTS + COMMIT + PUSH + SAVE STATE + approve.
 
 ## reviewiq-test Flow
 
