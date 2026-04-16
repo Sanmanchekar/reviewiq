@@ -1,6 +1,3 @@
-# ReviewIQ state files
-.pr-review/reviews/
-
 # Go build output
 /reviewiq
 /dist/

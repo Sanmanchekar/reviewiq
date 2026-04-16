@@ -32,7 +32,8 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 |---------|-------------|
 | **`reviewiq-pr`** | Review PR — `--full` (default) or `--interactive` (file-by-file) |
 | **`reviewiq-recheck`** | Re-review — auto-resolves fixed findings, flags new issues |
-| **`reviewiq-resolve`** | Final check — verify all resolved, approve PR |
+| **`reviewiq-resolve`** | Fix all findings in code, run tests, mark resolved, auto-approve PR |
+| **`reviewiq-test`** | Run tests for PR changes — detect framework, targeted + full suite |
 
 **Input**: PR link, PR number, or branch. **Flags**: `--full` (default), `--interactive`.
 
@@ -75,11 +76,15 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 # Resolve — verify all fixed, approve PR
 /reviewiq-resolve 42
 
+# Run tests for changed files
+/reviewiq-test 42
+
 # Natural language
 review this PR                    # acts like reviewiq-pr --full
 review this PR interactively      # acts like reviewiq-pr --interactive
 recheck                           # acts like reviewiq-recheck
 resolve / approve                 # acts like reviewiq-resolve
+run tests                         # acts like reviewiq-test
 ```
 
 **CLI** (needs `ANTHROPIC_API_KEY`):
@@ -181,113 +186,52 @@ Assessment: REQUEST CHANGES → NEEDS DISCUSSION
 
 ---
 
-### `/reviewiq-resolve` — Verify All Fixed & Approve
+### `/reviewiq-resolve` — Fix All & Approve
 
-Goes through all rounds, verifies every finding is resolved, approves the PR.
+Applies suggested fixes to code, marks all findings resolved, and auto-approves.
 
 ```
 /reviewiq-resolve https://github.com/owner/repo/pull/42
 ```
 
 **Flow**:
-1. Load all state + all round reports
-2. For each pending finding: read current code, verify fix applied
-3. If ALL resolved:
-   - Post final resolution report to PR
-   - Approve PR via `gh pr review --approve`
-4. If still pending: list what's still open, do NOT approve
+1. Load state from GitHub PR hidden comment
+2. For each open finding: apply `suggested_fix` to the target file
+3. Mark all findings as `resolved`
+4. Save updated state, post resolution report
+5. Auto-approve PR via `gh pr review --approve`
 
-**Output when resolved**:
+**Output**:
 ```
-ReviewIQ Final Resolution — PR #42
+ReviewIQ Resolution — PR #42
 
-| # | Severity | Status | Resolution |
-|---|----------|--------|------------|
-| 1 | CRITICAL | ✅ resolved | Backoff added (Round 2) |
-| 2 | IMPORTANT | ✅ resolved | Idempotency key added (Round 3) |
-| 3 | NIT | ✅ resolved | Fixed (Round 2) |
+Applied fixes:
+  1. [CRITICAL] Retry without backoff — retry.py:42 → backoff added
+  2. [IMPORTANT] Missing idempotency — handler.py:18 → idempotency key added
+  3. [NIT] Typo in error message — utils.py:92 → fixed
 
-All findings resolved. PR APPROVED.
-```
-
-**Output when not resolved**:
-```
-Cannot approve — 1 finding still pending:
-  Finding 2: [IMPORTANT] Missing idempotency — handler.py:18
-
-Run /reviewiq-recheck after fixes are pushed.
+All 3 findings resolved. PR APPROVED.
 ```
 
 ---
 
-## Review Folder
+## State Storage
 
-Each review gets a persistent folder with iteration tracking and markdown reports:
-
-```
-.pr-review/
-  pr-42/                          # one folder per PR/branch
-    state.json                    # master state: all findings + statuses
-    round-1/
-      report.md                   # markdown report for round 1
-    round-2/
-      report.md                   # markdown report for round 2
-    history.md                    # running log of all rounds
-```
-
-### state.json
-
-```json
-{
-  "pr": { "number": 42, "repo": "owner/repo", "title": "...", "base": "main", "head": "feature/xyz" },
-  "current_round": 2,
-  "last_reviewed_sha": "abc123",
-  "findings": {
-    "1": {
-      "id": 1, "severity": "CRITICAL", "status": "pending",
-      "file": "retry.py", "line": 42,
-      "title": "Retry without backoff",
-      "suggestion": "time.sleep(min(2 ** attempt * 0.5, 30))",
-      "resolution": "Add exponential backoff with jitter",
-      "comment": "Thundering herd risk at scale",
-      "created_round": 1, "resolved_round": null,
-      "history": [
-        { "round": 1, "status": "pending", "note": "Initial" },
-        { "round": 2, "status": "resolved", "note": "Backoff added" }
-      ]
-    }
-  },
-  "summary": { "total": 3, "pending": 1, "resolved": 2 }
-}
-```
+State lives in a **hidden GitHub PR comment** — no local files. This makes state available across machines, CI, and team members.
 
 ### Finding Statuses
 
 | Status | Meaning |
 |--------|---------|
-| `pending` | Found, not yet fixed |
-| `resolved` | Fix confirmed in code |
-| `skipped` | User chose to skip |
-| `needs-review` | Code changed but not per suggestion |
+| `open` | Found, not yet fixed |
+| `resolved` | Fix applied/confirmed |
+| `wontfix` | Developer won't fix (accepted) |
+| `retracted` | Finding was wrong |
+| `partially_fixed` | Partially addressed |
 
-### Markdown Reports (round-N/report.md)
+### Round Numbers
 
-```markdown
-# ReviewIQ Report — PR #42 Round 1
-**Date**: 2026-04-15
-**Skills**: commandments, security, python, django (~4.2K words)
-**Files**: 4 | **Findings**: 3
-
-## Finding 1: [CRITICAL] Retry without backoff — `retry.py:42`
-**Status**: pending
-**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
-**Resolution**: Add exponential backoff
-**Comment**: Thundering herd risk
-
-## Summary
-Pending: 3 | Resolved: 0
-Assessment: REQUEST CHANGES
-```
+Each iteration increments: review = round 1, first recheck = round 2, etc.
 
 ---
 
@@ -355,10 +299,14 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 
 ## Configuration
 
-| Variable | Required for | Description |
-|----------|-------------|-------------|
-| `ANTHROPIC_API_KEY` | CLI only | **Not needed for Claude Code.** |
-| `GITHUB_TOKEN` | CLI + posting to PR | Auto-configured during install via `gh auth`. |
+**No tokens needed locally.** ReviewIQ reuses your existing `gh` CLI auth — if you can push code, you can review PRs.
+
+| Variable | Context | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | CLI binary only | **Not needed for Claude Code.** |
+| `GITHUB_TOKEN` | GitHub Actions only | Auto-provided by GitHub. **Not needed locally.** |
+
+> **Prerequisite**: `gh auth login` (one-time). If you already use `gh` or GitHub Desktop, you're set.
 
 ---
 
@@ -370,12 +318,12 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 ~/.reviewiq/skills/               16 skill modules
 ~/.claude/REVIEWIQ.md             Claude Code global config
 
-# Per-repo (created on first review)
-.pr-review/
-  pr-42/                          Review state + reports per PR
-    state.json
-    round-1/report.md
-    history.md
+# Per-repo
+.pr-review/skills/                Skill files (customizable per repo)
+.pr-review/agent.md               Review protocol
+
+# State (no local files)
+GitHub PR hidden comment           Base64-encoded state in <!-- REVIEWIQ_STATE_COMMENT -->
 
 # Source code
 cmd/reviewiq/main.go              CLI (Go + cobra)
@@ -384,8 +332,8 @@ internal/
 .claude/commands/
   reviewiq-pr.md                  /reviewiq-pr — review (--full or --interactive)
   reviewiq-recheck.md             /reviewiq-recheck — re-review with history
-  reviewiq-resolve.md             /reviewiq-resolve — verify + approve
-.pr-review/skills/                16 skill files
+  reviewiq-resolve.md             /reviewiq-resolve — fix all + test + approve
+  reviewiq-test.md                /reviewiq-test — run tests for PR changes
 install.sh                        One-line installer
 uninstall.sh                      One-line uninstaller
 ```

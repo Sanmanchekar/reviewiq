@@ -1,4 +1,10 @@
 name: PR Review Agent
+# Triggers:
+#   PR opened → full review with inline comments
+#   PR push (synchronize) → incremental re-review
+#   Comment "@review-agent" → ask question
+#   Comment "@review-agent resolve" → check/approve
+#   Comment "@review-agent recheck" → re-review
 
 on:
   pull_request:

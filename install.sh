@@ -6,13 +6,14 @@
 #   curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 #
 # What it does:
-#   1. Builds and installs the Go binary to ~/.local/bin
-#   2. Copies review skills to ~/.reviewiq/skills/ (global)
-#   3. Installs Claude Code global config (~/.claude/REVIEWIQ.md)
-#   4. Sets up PATH
-#   5. Done — works in every repo, no per-repo init needed
+#   1. Checks/installs dependencies (git, go >= 1.22, gh CLI)
+#   2. Builds and installs the Go binary to ~/.local/bin
+#   3. Copies review skills to ~/.reviewiq/skills/ (global)
+#   4. Installs Claude Code global config (~/.claude/REVIEWIQ.md)
+#   5. Sets up PATH
+#   6. Done — works in every repo, no per-repo init needed
 #
-# Requires: git, go (>= 1.22)
+# Requires: curl (everything else is auto-installed if missing)
 #
 
 set -euo pipefail
@@ -37,20 +38,120 @@ warn()  { echo -e "${YELLOW}[reviewiq]${NC} $*"; }
 error() { echo -e "${RED}[reviewiq]${NC} $*" >&2; exit 1; }
 step()  { echo -e "${CYAN}[reviewiq]${NC} $*"; }
 
-# ── Checks ───────────────────────────────────────────────────────────────────
+# ── Checks & Auto-Install ────────────────────────────────────────────────────
 
-check_go() {
-    if ! command -v go &>/dev/null; then
-        error "Go is not installed. Install it from https://go.dev/dl/ (requires >= 1.22)"
+check_curl() {
+    if ! command -v curl &>/dev/null; then
+        error "curl is required but not installed. Install it first."
     fi
-    local ver
-    ver="$(go version </dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)"
-    info "Found Go $ver"
 }
 
 check_git() {
-    if ! command -v git &>/dev/null; then
-        error "git is not installed."
+    if command -v git &>/dev/null; then
+        info "Found git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')"
+        return
+    fi
+
+    step "Installing git..."
+    local os
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+
+    case "$os" in
+        darwin)
+            # macOS: xcode-select installs git
+            xcode-select --install 2>/dev/null || true
+            # Wait briefly for the install dialog
+            if ! command -v git &>/dev/null; then
+                error "git not found. Accept the Xcode Command Line Tools prompt and re-run."
+            fi
+            ;;
+        linux)
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update -qq && sudo apt-get install -y -qq git
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y git
+            elif command -v yum &>/dev/null; then
+                sudo yum install -y git
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -S --noconfirm git
+            else
+                error "git is not installed. Install it manually."
+            fi
+            ;;
+        *) error "git is not installed. Install it manually." ;;
+    esac
+
+    if command -v git &>/dev/null; then
+        info "Installed git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')"
+    else
+        error "Failed to install git."
+    fi
+}
+
+check_go() {
+    local required_major=1
+    local required_minor=22
+
+    if command -v go &>/dev/null; then
+        local ver
+        ver="$(go version </dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+        local major minor
+        major="$(echo "$ver" | cut -d. -f1)"
+        minor="$(echo "$ver" | cut -d. -f2)"
+        if [[ "$major" -gt "$required_major" ]] || { [[ "$major" -eq "$required_major" ]] && [[ "$minor" -ge "$required_minor" ]]; }; then
+            info "Found Go $ver"
+            return
+        fi
+        warn "Found Go $ver but >= ${required_major}.${required_minor} is required. Upgrading..."
+    fi
+
+    step "Installing Go..."
+    local os arch
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    arch="$(uname -m)"
+
+    case "$arch" in
+        x86_64|amd64) arch="amd64" ;;
+        arm64|aarch64) arch="arm64" ;;
+        *) arch="amd64" ;;
+    esac
+
+    # Fetch latest stable Go version
+    local go_ver
+    go_ver="$(curl -sSL 'https://go.dev/VERSION?m=text' | head -1 | sed 's/go//')" || go_ver="1.23.4"
+
+    local go_url="https://go.dev/dl/go${go_ver}.${os}-${arch}.tar.gz"
+    local go_tmp
+    go_tmp="$(mktemp -d)"
+
+    curl -sSL "$go_url" -o "$go_tmp/go.tar.gz"
+
+    # Install to /usr/local (standard location)
+    if [[ -w /usr/local ]]; then
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf "$go_tmp/go.tar.gz"
+    else
+        sudo rm -rf /usr/local/go
+        sudo tar -C /usr/local -xzf "$go_tmp/go.tar.gz"
+    fi
+    rm -rf "$go_tmp"
+
+    export PATH="/usr/local/go/bin:$PATH"
+
+    # Persist in shell RC
+    detect_shell_rc
+    if [[ -n "$SHELL_RC" ]]; then
+        if ! grep -q '/usr/local/go/bin' "$SHELL_RC" 2>/dev/null; then
+            echo "" >> "$SHELL_RC"
+            echo "# Go" >> "$SHELL_RC"
+            echo 'export PATH="/usr/local/go/bin:$PATH"' >> "$SHELL_RC"
+        fi
+    fi
+
+    if command -v go &>/dev/null; then
+        info "Installed Go $(go version </dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    else
+        error "Failed to install Go. Install manually from https://go.dev/dl/"
     fi
 }
 
@@ -137,7 +238,6 @@ install_gh() {
         info "gh installed to $INSTALL_DIR"
     else
         warn "Could not install gh CLI. Install manually: https://cli.github.com"
-        warn "ReviewIQ will fall back to curl + GITHUB_TOKEN for PR reviews."
     fi
 }
 
@@ -147,54 +247,19 @@ setup_gh_auth() {
         return
     fi
 
-    # Skip if already authenticated
+    # Check if already authenticated (via browser login, SSH, credential manager, etc.)
     if gh auth status &>/dev/null; then
-        info "gh already authenticated"
+        info "gh already authenticated (reusing existing git credentials)"
         return
     fi
 
     step "GitHub authentication required for PR reviews."
     echo ""
-    echo -e "  ${CYAN}How to get a token:${NC}"
-    echo -e "  1. Go to https://github.com/settings/tokens"
-    echo -e "  2. Generate new token (classic)"
-    echo -e "  3. Select scopes: ${BOLD}repo${NC}, ${BOLD}read:org${NC}"
-    echo -e "  4. Copy the token"
+    echo -e "  ReviewIQ reuses your existing git credentials — no token needed."
+    echo -e "  Run: ${BOLD}gh auth login${NC}"
+    echo -e "  This opens a browser for GitHub OAuth (same auth git uses)."
     echo ""
-
-    # Read from /dev/tty to get user input even when piped via curl | bash
-    local token=""
-    if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
-        echo -ne "  ${BOLD}Paste your GitHub token (or press Enter to skip):${NC} "
-        read -r token < /dev/tty 2>/dev/null || true
-    fi
-
-    if [[ -n "$token" ]]; then
-        echo "$token" | gh auth login --with-token 2>/dev/null
-        if gh auth status &>/dev/null; then
-            info "GitHub authenticated successfully"
-        else
-            warn "Authentication failed. Run 'gh auth login' manually."
-            # Still save token for curl fallback
-            setup_token_env "$token"
-        fi
-    else
-        warn "Skipped GitHub auth. Run 'gh auth login' later to enable PR reviews."
-    fi
-}
-
-setup_token_env() {
-    local token="$1"
-    detect_shell_rc
-    if [[ -n "$SHELL_RC" ]] && [[ -n "$token" ]]; then
-        if ! grep -q "GITHUB_TOKEN" "$SHELL_RC" 2>/dev/null; then
-            echo "" >> "$SHELL_RC"
-            echo "# GitHub token for ReviewIQ" >> "$SHELL_RC"
-            echo "export GITHUB_TOKEN=\"$token\"" >> "$SHELL_RC"
-            info "Saved GITHUB_TOKEN to $SHELL_RC"
-        fi
-        export GITHUB_TOKEN="$token"
-    fi
+    warn "Run 'gh auth login' to enable PR reviews."
 }
 
 detect_shell_rc() {
@@ -410,6 +475,7 @@ main() {
     echo "  ╚══════════════════════════════════════╝"
     echo -e "${NC}"
 
+    check_curl
     check_git
     check_go
     install_gh

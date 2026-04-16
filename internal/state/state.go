@@ -1,5 +1,4 @@
-// Package state manages ReviewIQ review state with dual-backend persistence.
-// CLI mode uses local JSON files; CI mode uses hidden GitHub PR comments.
+// Package state manages ReviewIQ review state via GitHub PR comments.
 package state
 
 import (
@@ -8,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Sanmanchekar/reviewiq/internal/github"
 )
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -334,37 +333,6 @@ func (s *ReviewState) RecomputeSummary() {
 	}
 }
 
-// ── Local File Backend ──────────────────────────────────────────────────────
-
-func stateDir() string  { return filepath.Join(".pr-review", "reviews") }
-func statePath(pr int) string { return filepath.Join(stateDir(), fmt.Sprintf("pr-%d.json", pr)) }
-
-func LoadLocal(prNumber int) (*ReviewState, error) {
-	data, err := os.ReadFile(statePath(prNumber))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var s ReviewState
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-func SaveLocal(s *ReviewState) error {
-	if err := os.MkdirAll(stateDir(), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(statePath(s.PR.Number), data, 0o644)
-}
-
 // ── GitHub Comment Backend ──────────────────────────────────────────────────
 
 const (
@@ -416,19 +384,10 @@ func SaveRemote(s *ReviewState) error {
 	return ghAPI("POST", fmt.Sprintf("/repos/%s/issues/%d/comments", s.PR.Repo, s.PR.Number), map[string]string{"body": body})
 }
 
-// ── Unified Load/Save ───────────────────────────────────────────────────────
+// ── Load/Save (GitHub-only) ─────────────────────────────────────────────────
 
-func Load(prNumber int, repo, prefer string) *ReviewState {
-	if prefer == "" {
-		prefer = "auto"
-	}
-	if prefer == "local" || prefer == "auto" {
-		s, _ := LoadLocal(prNumber)
-		if s != nil {
-			return s
-		}
-	}
-	if (prefer == "remote" || prefer == "auto") && repo != "" {
+func Load(prNumber int, repo string) *ReviewState {
+	if repo != "" {
 		s, _ := LoadRemote(repo, prNumber)
 		if s != nil {
 			return s
@@ -437,16 +396,8 @@ func Load(prNumber int, repo, prefer string) *ReviewState {
 	return NewState(prNumber, repo)
 }
 
-func Save(s *ReviewState, targets string) {
-	if targets == "" {
-		targets = "auto"
-	}
-	if targets == "local" || targets == "both" || targets == "auto" {
-		_ = SaveLocal(s)
-	}
-	if targets == "remote" || targets == "both" {
-		_ = SaveRemote(s)
-	} else if targets == "auto" && s.PR.Repo != "" && os.Getenv("GITHUB_TOKEN") != "" {
+func Save(s *ReviewState) {
+	if s.PR.Repo != "" {
 		_ = SaveRemote(s)
 	}
 }
@@ -463,9 +414,14 @@ func encodeState(s *ReviewState) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
+func hasGitHubAuth() bool {
+	token, err := github.GetToken()
+	return err == nil && token != ""
+}
+
 func findStateComment(repo string, prNumber int) (int, *ReviewState, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
+	token, err := github.GetToken()
+	if err != nil {
 		return 0, nil, nil
 	}
 	url := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", repo, prNumber)
@@ -508,7 +464,10 @@ func findStateComment(repo string, prNumber int) (int, *ReviewState, error) {
 }
 
 func ghAPI(method, endpoint string, data map[string]string) error {
-	token := os.Getenv("GITHUB_TOKEN")
+	token, err := github.GetToken()
+	if err != nil {
+		return err
+	}
 	body, _ := json.Marshal(data)
 	url := "https://api.github.com" + endpoint
 	req, _ := http.NewRequest(method, url, strings.NewReader(string(body)))

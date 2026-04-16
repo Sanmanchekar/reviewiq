@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -54,45 +54,53 @@ func detectPRNumber(branch string) int {
 	return int(math.Abs(float64(h))) % 100000
 }
 
-func findExistingState(prNumber int) (int, *state.ReviewState) {
-	dir := filepath.Join(".pr-review", "reviews")
-	if prNumber > 0 {
-		s, _ := state.LoadLocal(prNumber)
-		if s != nil {
-			return prNumber, s
-		}
-		return 0, nil
+func detectRepo() string {
+	remote := gitops.Run("remote", "get-url", "origin")
+	re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
+	m := re.FindStringSubmatch(remote)
+	if m == nil {
+		return ""
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, nil
-	}
-	type entry struct {
-		name string
-		mod  int64
-	}
-	var files []entry
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "pr-") && strings.HasSuffix(e.Name(), ".json") {
-			info, _ := e.Info()
-			if info != nil {
-				files = append(files, entry{e.Name(), info.ModTime().Unix()})
-			}
+	return m[1] + "/" + m[2]
+}
+
+func detectPRFromBranch() int {
+	out, err := exec.Command("gh", "pr", "view", "--json", "number", "-q", ".number").Output()
+	if err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
+			return n
 		}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].mod > files[j].mod })
-	if len(files) == 0 {
-		return 0, nil
-	}
-	re := regexp.MustCompile(`pr-(\d+)\.json`)
-	if m := re.FindStringSubmatch(files[0].name); len(m) > 1 {
-		n, _ := strconv.Atoi(m[1])
-		s, _ := state.LoadLocal(n)
-		if s != nil {
-			return n, s
+	return 0
+}
+
+func parseInput(input string) (owner, repo string, prNumber int) {
+	if strings.Contains(input, "github.com") {
+		var err error
+		owner, repo, prNumber, err = gh.ParsePRLink(input)
+		if err != nil {
+			color.Red("%s", err)
+			os.Exit(1)
 		}
+		return
 	}
-	return 0, nil
+	prNumber, _ = strconv.Atoi(input)
+	if prNumber == 0 {
+		color.Red("Invalid input. Provide a PR link or number.")
+		os.Exit(1)
+	}
+	fullRepo := detectRepo()
+	if fullRepo == "" {
+		color.Red("Cannot detect GitHub repo from remote. Use full PR link.")
+		os.Exit(1)
+	}
+	parts := strings.SplitN(fullRepo, "/", 2)
+	owner, repo = parts[0], parts[1]
+	return
+}
+
+func loadState(prNumber int, repo string) *state.ReviewState {
+	return state.Load(prNumber, repo)
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -123,22 +131,18 @@ func initCmd() *cobra.Command {
 				fmt.Printf("  Removed old: %s\n", filepath.Base(old))
 			}
 
+			// Always overwrite slash commands — they're generated, not user-edited
 			for name, content := range claudeCommands {
 				path := filepath.Join(claudeDir, name+".md")
-				if _, err := os.Stat(path); err != nil {
-					os.WriteFile(path, []byte(content), 0o644)
-					created++
-				}
+				os.WriteFile(path, []byte(content), 0o644)
+				created++
 			}
 
-			// .gitignore
-			gitignoreLine := ".pr-review/reviews/"
-			data, _ := os.ReadFile(".gitignore")
-			if !strings.Contains(string(data), gitignoreLine) {
-				f, _ := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-				if f != nil {
-					f.WriteString("\n# ReviewIQ state files\n" + gitignoreLine + "\n")
-					f.Close()
+			// Clean up old .gitignore entry for local state (no longer used)
+			if data, err := os.ReadFile(".gitignore"); err == nil {
+				cleaned := strings.Replace(string(data), "\n# ReviewIQ state files\n.pr-review/reviews/\n", "\n", 1)
+				if cleaned != string(data) {
+					os.WriteFile(".gitignore", []byte(cleaned), 0o644)
 				}
 			}
 
@@ -151,7 +155,7 @@ func initCmd() *cobra.Command {
 			fmt.Println("  .pr-review/agent.md              — review protocol")
 			fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			fmt.Println()
-			fmt.Println("  Claude Code commands (3):")
+			fmt.Printf("  Claude Code commands (%d):\n", len(claudeCommands))
 			for name := range claudeCommands {
 				fmt.Printf("    /%-24s .claude/commands/%s.md\n", name, name)
 			}
@@ -160,6 +164,7 @@ func initCmd() *cobra.Command {
 			fmt.Println("  /reviewiq-pr <PR> [--full|--interactive]")
 			fmt.Println("  /reviewiq-recheck <PR>")
 			fmt.Println("  /reviewiq-resolve <PR>")
+			fmt.Println("  /reviewiq-test <PR>")
 		},
 	}
 }
@@ -174,35 +179,103 @@ $ARGUMENTS: PR link, PR number, or branch + optional flag (--full or --interacti
 /reviewiq-pr 42 --interactive       # file-by-file, post/skip per file
 
 ## Steps
-1. Fetch PR via gh CLI or GitHub API
-2. Create .pr-review/pr-<N>/ folder with state.json + round-N/report.md
-3. Load relevant skills from ~/.reviewiq/skills/ or .pr-review/skills/
-4. --full: review all files, cross-file analysis, auto-post inline comments + report
-5. --interactive: review per file, show findings, ask P(post)/S(skip)/F(fix), auto-skip if no findings
-6. Save state + markdown report
+1. Detect repo: ` + "`gh repo view --json nameWithOwner -q .nameWithOwner`" + ` — use this EXACT string everywhere
+2. Fetch PR data + head SHA via gh CLI
+3. Load existing state from GitHub PR hidden comment (look for ` + "`<!-- REVIEWIQ_STATE_COMMENT -->`" + `) or start fresh as round 1
+4. Load relevant skills from ~/.reviewiq/skills/ or .pr-review/skills/
+5. --full (default): review all files, cross-file analysis, auto-post inline comments + report
+6. --interactive: review per file, show findings, ask P(post)/S(skip)/F(fix), auto-skip if no findings
+7. Save state to GitHub PR hidden comment (create or update the ` + "`<!-- REVIEWIQ_STATE_COMMENT -->`" + ` comment)
 `,
 	"reviewiq-recheck": `Re-review PR with history: $ARGUMENTS
 
 $ARGUMENTS: PR link, PR number, or branch.
 
 ## Steps
-1. Load previous state.json — knows all findings and statuses
-2. Fetch current code, compare against last reviewed SHA
-3. Auto-resolve findings where code is fixed
-4. Keep pending findings that aren't fixed
-5. Check new changes for new issues
-6. Post new round report as PR comment (appends, never overwrites)
-7. Save updated state + round-N/report.md
+1. Detect repo: ` + "`gh repo view --json nameWithOwner -q .nameWithOwner`" + `
+2. Load state from GitHub PR hidden comment (` + "`<!-- REVIEWIQ_STATE_COMMENT -->`" + `)
+3. Increment round number: new round = count of previous rounds + 1
+4. Fetch current code, compare against last reviewed SHA in state
+5. For each pending finding:
+   - Code fixed? → auto-resolve, update status history
+   - Still broken? → keep pending
+   - Changed differently? → mark needs-review
+6. Check new changes for NEW issues — assign next finding IDs
+7. Post new round report as PR comment (append to timeline, never overwrite previous rounds)
+8. Save updated state to GitHub PR hidden comment
 `,
-	"reviewiq-resolve": `Verify all findings resolved and approve PR: $ARGUMENTS
+	"reviewiq-resolve": `Resolve all findings and approve PR: $ARGUMENTS
 
 $ARGUMENTS: PR link, PR number, or branch.
 
+## IMPORTANT: This command APPLIES fixes, it does NOT just verify them.
+
+You MUST edit the actual source files to fix each finding. Do NOT just check if fixes exist.
+
 ## Steps
-1. Load all state + all round reports
-2. For each pending finding: verify code is fixed
-3. If ALL resolved: post final resolution report + approve PR via gh pr review --approve
-4. If still pending: list what's open, do NOT approve
+1. Detect repo: ` + "`REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)`" + `
+2. Get PR info: ` + "`gh pr view <N> --repo $REPO --json headRefOid,headRefName,baseRefName`" + `
+3. Load state from GitHub PR hidden comment (` + "`<!-- REVIEWIQ_STATE_COMMENT -->`" + `)
+   - If no state comment exists, check conversation history for findings from prior review
+4. For EACH pending/open finding:
+   a. Read the target file using the Read tool
+   b. Locate the problematic code at the finding's line number
+   c. **EDIT the file** — use the Edit tool to apply the suggested_fix as the replacement code
+   d. After editing, verify the fix is syntactically correct
+5. **RUN TESTS** after all fixes are applied:
+   a. Detect the project's test framework (pytest, go test, npm test, etc.)
+   b. Run the test suite: focus on files that were modified
+   c. If tests fail: diagnose, fix the issue, re-run until green
+   d. If no test framework exists: run linter/type-checker if available
+6. After all fixes pass tests:
+   a. Save updated state to GitHub PR hidden comment (mark all as resolved)
+   b. Post resolution report as PR comment listing every fix applied + test results
+   c. Approve PR: ` + "`gh pr review <N> --repo $REPO --approve --body \"All findings resolved and tests passing — ReviewIQ\"`" + `
+
+## Key behavior
+- This command WRITES CODE. It edits files directly.
+- Every finding with a suggested_fix gets applied via the Edit tool.
+- If a suggested_fix is unclear, use your judgment to write the correct fix.
+- Tests MUST pass before approving. If tests fail, fix until green.
+- After all edits, the developer can review the changes via git diff.
+`,
+	"reviewiq-test": `Run tests for PR changes: $ARGUMENTS
+
+$ARGUMENTS: PR link, PR number, branch, or empty (uses current branch).
+
+## Steps
+1. Detect repo: ` + "`REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)`" + `
+2. Identify changed files:
+   - If PR number given: ` + "`gh pr diff <N> --repo $REPO --name-only`" + `
+   - If branch: ` + "`git diff --name-only main...HEAD`" + `
+   - If empty: use current branch vs main/master
+3. Detect test framework from project:
+   - Python: pytest, unittest (look for pytest.ini, setup.cfg, pyproject.toml, conftest.py)
+   - JavaScript/TypeScript: jest, vitest, mocha (look for package.json scripts)
+   - Go: ` + "`go test`" + `
+   - Java: maven/gradle test
+   - Ruby: rspec, minitest
+4. Run tests:
+   a. First try targeted: only tests related to changed files
+   b. If no targeted tests found, run full suite
+   c. Also run linter/type-checker if available (flake8, mypy, eslint, tsc, etc.)
+5. Report results:
+   - List each test file run and pass/fail status
+   - Show any failures with error output
+   - If all pass: report green
+   - If failures: show what failed and suggest fixes
+
+## Test discovery patterns
+- Python: ` + "`pytest <changed_dir>/`" + ` or ` + "`pytest tests/ -k <module_name>`" + `
+- JS/TS: ` + "`npx jest --findRelatedTests <changed_files>`" + `
+- Go: ` + "`go test ./path/to/changed/...`" + `
+- Look for test files matching: test_*.py, *_test.go, *.test.ts, *.spec.ts
+
+## Key behavior
+- Always run tests from the project root
+- Respect existing test configuration (pytest.ini, jest.config, etc.)
+- If no tests exist for changed code, suggest what tests should be written
+- Report results clearly — don't just say "tests passed", show what ran
 `,
 }
 
@@ -234,7 +307,12 @@ func reviewCmd() *cobra.Command {
 			if pr == 0 {
 				pr = detectPRNumber(branch)
 			}
-			s := state.Load(pr, "", "local")
+			repo := detectRepo()
+			if repo == "" {
+				color.Red("Cannot detect GitHub repo from remote. State won't be saved.")
+			}
+			s := state.Load(pr, repo)
+			s.PR.Repo = repo
 			s.PR.Title = "Review of " + branch
 			s.PR.Author = gitops.Run("config", "user.name")
 			s.PR.BaseBranch = base
@@ -247,10 +325,10 @@ func reviewCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			state.Save(s, "local")
+			state.Save(s)
 			fmt.Println(response)
 			fmt.Printf("\n")
-			color.Green("State saved: .pr-review/reviews/pr-%d.json", pr)
+			color.Green("State saved to GitHub PR comment")
 			fmt.Printf("Findings: %d (%d open)\n", s.Summary.TotalFindings, s.Summary.Open)
 		},
 	}
@@ -274,8 +352,12 @@ func checkCmd() *cobra.Command {
 			if pr == 0 {
 				pr = detectPRNumber(branch)
 			}
-			prNum, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 {
+				pr = detectPRFromBranch()
+			}
+			repo := detectRepo()
+			s := loadState(pr, repo)
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No existing review state found. Run 'reviewiq review <branch>' first.")
 				os.Exit(1)
 			}
@@ -295,11 +377,10 @@ func checkCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			state.Save(s, "local")
+			state.Save(s)
 			fmt.Println(response)
 			fmt.Printf("\nOpen: %d | Resolved: %d | Assessment: %s\n",
 				s.Summary.Open, s.Summary.Resolved, s.Summary.Assessment)
-			_ = prNum
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "Base branch")
@@ -313,14 +394,18 @@ func statusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show current finding statuses",
 		Run: func(cmd *cobra.Command, args []string) {
-			prNum, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 {
+				pr = detectPRFromBranch()
+			}
+			repo := detectRepo()
+			s := loadState(pr, repo)
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No review state found. Run 'reviewiq review <branch>' first.")
 				os.Exit(1)
 			}
 			sm := s.Summary
 			bold := color.New(color.Bold)
-			bold.Printf("ReviewIQ Status — PR #%d (Round %d)\n", prNum, len(s.ReviewRounds))
+			bold.Printf("ReviewIQ Status — PR #%d (Round %d)\n", pr, len(s.ReviewRounds))
 			fmt.Printf("Assessment: %s\n\n", sm.Assessment)
 
 			if len(s.Findings) == 0 {
@@ -357,8 +442,9 @@ func explainCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			fid, _ := strconv.Atoi(args[0])
-			_, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 { pr = detectPRFromBranch() }
+			s := loadState(pr, detectRepo())
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No review state found.")
 				os.Exit(1)
 			}
@@ -373,7 +459,7 @@ func explainCmd() *cobra.Command {
 				color.Red("Failed: %s", err)
 				os.Exit(1)
 			}
-			state.Save(s, "local")
+			state.Save(s)
 			fmt.Println(response)
 		},
 	}
@@ -389,8 +475,9 @@ func askCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			question := strings.Join(args, " ")
-			_, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 { pr = detectPRFromBranch() }
+			s := loadState(pr, detectRepo())
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No review state found.")
 				os.Exit(1)
 			}
@@ -411,7 +498,7 @@ func askCmd() *cobra.Command {
 				color.Red("Failed: %s", err)
 				os.Exit(1)
 			}
-			state.Save(s, "local")
+			state.Save(s)
 			fmt.Println(response)
 		},
 	}
@@ -428,8 +515,9 @@ func transitionCmd(use, short, targetStatus string) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			fid, _ := strconv.Atoi(args[0])
-			_, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 { pr = detectPRFromBranch() }
+			s := loadState(pr, detectRepo())
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No review state found.")
 				os.Exit(1)
 			}
@@ -444,7 +532,7 @@ func transitionCmd(use, short, targetStatus string) *cobra.Command {
 				color.Red("Error: %s", err)
 				os.Exit(1)
 			}
-			state.Save(s, "local")
+			state.Save(s)
 			color.Green("Finding %d: %s -> %s", fid, oldStatus, targetStatus)
 			if note != "" {
 				fmt.Printf("Note: %s\n", note)
@@ -467,8 +555,9 @@ func approveCmd() *cobra.Command {
 		Use:   "approve",
 		Short: "Final check for remaining blockers",
 		Run: func(cmd *cobra.Command, args []string) {
-			_, s := findExistingState(pr)
-			if s == nil {
+			if pr == 0 { pr = detectPRFromBranch() }
+			s := loadState(pr, detectRepo())
+			if len(s.ReviewRounds) == 0 {
 				color.Red("No review state found.")
 				os.Exit(1)
 			}
@@ -500,7 +589,18 @@ func approveCmd() *cobra.Command {
 			} else {
 				color.Green("APPROVE — no remaining findings. Safe to merge.")
 				s.Summary.Assessment = "APPROVE"
-				state.Save(s, "local")
+				state.Save(s)
+				// Actually approve on GitHub if repo is set
+				if s.PR.Repo != "" && s.PR.Number > 0 {
+					out, err := exec.Command("gh", "pr", "review", strconv.Itoa(s.PR.Number),
+						"--repo", s.PR.Repo, "--approve",
+						"--body", "All findings resolved — ReviewIQ").CombinedOutput()
+					if err != nil {
+						color.Yellow("GitHub approve failed: %s", strings.TrimSpace(string(out)))
+					} else {
+						color.Green("PR #%d approved on GitHub", s.PR.Number)
+					}
+				}
 			}
 		},
 	}
@@ -543,39 +643,11 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			input := args[0]
-
-			// Parse PR link or number
-			var owner, repo string
-			var prNumber int
-
-			if strings.Contains(input, "github.com") {
-				var err error
-				owner, repo, prNumber, err = gh.ParsePRLink(input)
-				if err != nil {
-					color.Red("%s", err)
-					os.Exit(1)
-				}
-			} else {
-				prNumber, _ = strconv.Atoi(input)
-				if prNumber == 0 {
-					color.Red("Invalid input. Provide a PR link or number.")
-					os.Exit(1)
-				}
-				// Detect owner/repo from git remote
-				remote := gitops.Run("remote", "get-url", "origin")
-				re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
-				m := re.FindStringSubmatch(remote)
-				if m == nil {
-					color.Red("Cannot detect GitHub repo from remote. Use full PR link.")
-					os.Exit(1)
-				}
-				owner, repo = m[1], m[2]
-			}
+			owner, repo, prNumber := parseInput(input)
 
 			bold := color.New(color.Bold)
 			cyan := color.New(color.FgCyan)
 
-			// Fetch PR info
 			step := color.New(color.FgCyan)
 			step.Printf("[reviewiq] Fetching PR #%d from %s/%s...\n", prNumber, owner, repo)
 
@@ -603,7 +675,7 @@ Examples:
 			fmt.Println()
 
 			// Load state
-			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo), "auto")
+			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo))
 			s.PR.Title = prInfo.Title
 			s.PR.Author = prInfo.Author
 			s.PR.BaseBranch = prInfo.BaseBranch
@@ -720,7 +792,7 @@ Keep it focused — this is one file, not the whole PR.`,
 				}
 
 				// Save state after each file
-				state.Save(s, "local")
+				state.Save(s)
 			}
 
 			// Post to PR if --post flag
@@ -759,13 +831,13 @@ Keep it focused — this is one file, not the whole PR.`,
 			bold.Println("Review Complete")
 			fmt.Printf("Total: %d findings | Open: %d | Assessment: %s\n",
 				s.Summary.TotalFindings, s.Summary.Open, s.Summary.Assessment)
-			fmt.Printf("State: .pr-review/reviews/pr-%d.json\n", prNumber)
+			fmt.Println("State: saved to GitHub PR comment")
 
 			if !post && len(allComments) > 0 {
 				fmt.Printf("\nTo post findings to PR: reviewiq pr %s --post\n", input)
 			}
 
-			state.Save(s, "local")
+			state.Save(s)
 		},
 	}
 	cmd.Flags().BoolVar(&post, "post", false, "Post findings as inline comments on the PR")
@@ -789,32 +861,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			input := args[0]
-
-			var owner, repo string
-			var prNumber int
-
-			if strings.Contains(input, "github.com") {
-				var err error
-				owner, repo, prNumber, err = gh.ParsePRLink(input)
-				if err != nil {
-					color.Red("%s", err)
-					os.Exit(1)
-				}
-			} else {
-				prNumber, _ = strconv.Atoi(input)
-				if prNumber == 0 {
-					color.Red("Invalid input. Provide a PR link or number.")
-					os.Exit(1)
-				}
-				remote := gitops.Run("remote", "get-url", "origin")
-				re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
-				m := re.FindStringSubmatch(remote)
-				if m == nil {
-					color.Red("Cannot detect GitHub repo from remote. Use full PR link.")
-					os.Exit(1)
-				}
-				owner, repo = m[1], m[2]
-			}
+			owner, repo, prNumber := parseInput(input)
 
 			bold := color.New(color.Bold)
 			step := color.New(color.FgCyan)
@@ -885,7 +932,7 @@ Examples:
 			}
 
 			// ── Load state ──────────────────────────────────────────────
-			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo), "auto")
+			s := state.Load(prNumber, fmt.Sprintf("%s/%s", owner, repo))
 			s.PR.Title = prInfo.Title
 			s.PR.Author = prInfo.Author
 			s.PR.BaseBranch = prInfo.BaseBranch
@@ -1017,7 +1064,7 @@ This is review round %d.`,
 			}
 
 			// ── Save state and print summary ────────────────────────────
-			state.Save(s, "both")
+			state.Save(s)
 
 			fmt.Println()
 			bold.Println("Review Complete")
@@ -1025,7 +1072,7 @@ This is review round %d.`,
 				s.Summary.TotalFindings,
 				countBySeverity(s, "CRITICAL"), countBySeverity(s, "IMPORTANT"), countBySeverity(s, "NIT"))
 			fmt.Printf("Assessment: %s\n", s.Summary.Assessment)
-			fmt.Printf("State: .pr-review/reviews/pr-%d.json\n", prNumber)
+			fmt.Println("State: saved to GitHub PR comment")
 		},
 	}
 	return cmd
@@ -1048,9 +1095,10 @@ You are a stateful PR review agent. See https://github.com/Sanmanchekar/reviewiq
 ## Commands
 - review: Full 4-stage review (understand, analyze, assess, report)
 - check: Incremental re-review after new commits
+- resolve: Apply fixes to code, run tests, approve PR
 - explain <N>: Deep dive into finding N
-- fix <N>: Apply suggested fix
 - status: Show current findings
+- test: Run tests for changed files
 
 ## Rules
 1. Never hallucinate file contents — always read the file

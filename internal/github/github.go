@@ -8,10 +8,44 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ── Token Resolution ───────────────────────────────────────────────────────
+// Priority: GITHUB_TOKEN env → GH_TOKEN env → `gh auth token` (reuses existing git auth)
+
+var (
+	cachedToken string
+	tokenOnce   sync.Once
+)
+
+// GetToken returns a GitHub token, exported for use by other packages.
+func GetToken() (string, error) {
+	tokenOnce.Do(func() {
+		// 1. Env vars (CI / explicit override)
+		if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+			cachedToken = t
+			return
+		}
+		if t := os.Getenv("GH_TOKEN"); t != "" {
+			cachedToken = t
+			return
+		}
+		// 2. Reuse existing gh CLI auth (browser/SSH/credential-manager)
+		out, err := exec.Command("gh", "auth", "token").Output()
+		if err == nil {
+			cachedToken = strings.TrimSpace(string(out))
+		}
+	})
+	if cachedToken == "" {
+		return "", fmt.Errorf("not authenticated: run 'gh auth login' or set GITHUB_TOKEN")
+	}
+	return cachedToken, nil
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,12 +93,9 @@ func ParsePRLink(link string) (owner, repo string, number int, err error) {
 // ── API Client ──────────────────────────────────────────────────────────────
 
 func apiRequest(method, endpoint string, body interface{}) ([]byte, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		token = os.Getenv("GH_TOKEN")
-	}
-	if token == "" {
-		return nil, fmt.Errorf("GITHUB_TOKEN or GH_TOKEN not set")
+	token, err := GetToken()
+	if err != nil {
+		return nil, err
 	}
 
 	url := "https://api.github.com" + endpoint
@@ -184,11 +215,12 @@ func PostPRComment(owner, repo string, number int, body string) error {
 
 func PostInlineComment(owner, repo string, number int, commitSHA string, comment InlineComment) error {
 	payload := map[string]interface{}{
-		"body":      comment.Body,
-		"commit_id": commitSHA,
-		"path":      comment.Path,
-		"line":      comment.Line,
-		"side":      "RIGHT",
+		"body":         comment.Body,
+		"commit_id":    commitSHA,
+		"path":         comment.Path,
+		"line":         comment.Line,
+		"side":         "RIGHT",
+		"subject_type": "line",
 	}
 	_, err := apiRequest("POST", fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, number), payload)
 	return err
@@ -198,10 +230,11 @@ func PostReview(owner, repo string, number int, commitSHA, body, event string, c
 	var reviewComments []map[string]interface{}
 	for _, c := range comments {
 		reviewComments = append(reviewComments, map[string]interface{}{
-			"path": c.Path,
-			"line": c.Line,
-			"side": "RIGHT",
-			"body": c.Body,
+			"path":         c.Path,
+			"line":         c.Line,
+			"side":         "RIGHT",
+			"body":         c.Body,
+			"subject_type": "line",
 		})
 	}
 

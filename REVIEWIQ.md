@@ -8,7 +8,8 @@ When the user asks to review a PR, review code, or uses reviewiq commands, activ
 |---------|-------------|
 | `reviewiq-pr <input>` | Review PR — `--full` (default, all files) or `--interactive` (file-by-file) |
 | `reviewiq-recheck <input>` | Re-review — auto-resolve fixed findings, flag new issues, post new report |
-| `reviewiq-resolve <input>` | Final check — verify all findings resolved, approve PR |
+| `reviewiq-resolve <input>` | Fix all findings in code, run tests, mark resolved, auto-approve PR |
+| `reviewiq-test <input>` | Run tests for PR changes — detect framework, run targeted tests, report results |
 
 **Flags for reviewiq-pr**:
 - `--full` (default): all files at once, auto-posts everything to PR
@@ -21,71 +22,78 @@ When the user asks to review a PR, review code, or uses reviewiq commands, activ
 - "review this PR interactively" → acts like `reviewiq-pr --interactive`
 - "recheck" / "check again" → acts like reviewiq-recheck
 - "resolve" / "approve" → acts like reviewiq-resolve
+- "run tests" / "test this" → acts like reviewiq-test
 
 ## Input Detection
 
+**CRITICAL**: NEVER guess the repo name. Always detect it first.
+
+**Step 1 — Detect owner/repo** (run FIRST, before anything else):
 ```bash
-# PR link → parse owner/repo/number from URL
-# PR number → detect owner/repo from git remote
-# Branch → diff against main/master
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 ```
 
-Fetch via `gh` CLI (preferred) or GitHub API curl (fallback):
+**Step 2 — Get PR info + head SHA**:
 ```bash
-gh pr view <N> --repo owner/repo --json files,title,author,baseRefName,headRefName,headRefOid
-gh pr diff <N> --repo owner/repo
+gh pr view <N> --repo $REPO --json title,author,baseRefName,headRefName,headRefOid,url
+gh pr diff <N> --repo $REPO
+HEAD_SHA=$(gh pr view <N> --repo $REPO --json headRefOid -q .headRefOid)
 ```
 
-## Review Folder Structure
+## State Storage (GitHub-only)
 
-Each review gets a persistent folder with iteration tracking:
+State lives ONLY in a hidden GitHub PR comment — no local files. This makes state available across machines and CI.
 
+The state comment has markers:
 ```
-.pr-review/
-  pr-42/                        # or branch-feature-xyz/
-    state.json                  # master state: all findings + statuses
-    round-1/
-      report.md                 # iteration 1 markdown report
-    round-2/
-      report.md                 # iteration 2 markdown report
-    history.md                  # running log of all rounds
+<!-- REVIEWIQ_STATE_COMMENT -->
+<details><summary>ReviewIQ State (Round N) — X open, Y resolved</summary>
+...summary table...
+</details>
+<!-- REVIEWIQ_STATE_START -->
+<base64-encoded JSON state>
+<!-- REVIEWIQ_STATE_END -->
 ```
 
-### state.json Schema
+**Load state**: Search PR comments for `<!-- REVIEWIQ_STATE_COMMENT -->`, decode the base64 between the markers.
+**Save state**: Create or update (PATCH) the comment with new encoded state.
+
+### State Schema
 ```json
 {
-  "pr": { "number": 42, "repo": "owner/repo", "title": "", "author": "", "base": "", "head": "" },
-  "current_round": 2,
-  "last_reviewed_sha": "abc123",
+  "version": 2,
+  "pr": { "number": 42, "repo": "owner/repo", "title": "", "author": "", "base_branch": "", "head_branch": "" },
+  "review_rounds": [
+    { "round": 1, "timestamp": "...", "head_sha": "abc123", "base_sha": "def456", "event": "review", "files_reviewed": [...] }
+  ],
   "findings": {
     "1": {
-      "id": 1,
-      "severity": "CRITICAL",
-      "status": "pending",
-      "file": "src/retry.py",
-      "line": 42,
+      "id": 1, "severity": "CRITICAL", "status": "open",
+      "file": "src/retry.py", "line": 42,
       "title": "Retry without backoff",
-      "problem": "...",
-      "suggestion": "time.sleep(min(2 ** attempt * 0.5, 30))",
-      "resolution": "Add exponential backoff with jitter",
-      "comment": "At 500 queued webhooks...",
+      "problem": "...", "impact": "...",
+      "suggested_fix": "time.sleep(min(2 ** attempt * 0.5, 30))",
+      "fix_rationale": "Exponential backoff prevents thundering herd",
       "created_round": 1,
-      "resolved_round": null,
-      "history": [
-        { "round": 1, "status": "pending", "note": "Initial finding" },
-        { "round": 2, "status": "resolved", "note": "Backoff added" }
+      "status_history": [
+        { "status": "open", "round": 1, "timestamp": "...", "note": "Initial finding" }
       ]
     }
   },
-  "summary": { "total": 3, "pending": 1, "resolved": 2, "skipped": 0 }
+  "summary": { "total_findings": 3, "open": 1, "resolved": 2, "wontfix": 0, "retracted": 0, "assessment": "REQUEST CHANGES", "last_reviewed_sha": "abc123" }
 }
 ```
 
 ### Finding Statuses
-- `pending` — found, not yet fixed
+- `open` — found, not yet fixed
 - `resolved` — fix confirmed in code
-- `skipped` — user chose to skip (won't post)
-- `needs-review` — code changed but not per suggestion
+- `wontfix` — developer won't fix (accepted)
+- `retracted` — finding was wrong
+- `partially_fixed` — partially addressed
+
+### Round Numbers
+Each iteration increments the round: review = round 1, first recheck = round 2, etc.
+Round number = `len(review_rounds) + 1` for the current action.
 
 ## Skills Loading (Token Optimization)
 
@@ -99,18 +107,19 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 - Filename patterns → devops.md, fintech.md, fraud.md, etc.
 
 **Token budget**:
-- reviewiq-full: ~5-8K words (all files, all relevant skills)
-- reviewiq-pr: ~2-3K words per file (only that file's skills)
+- reviewiq-pr --full: ~5-8K words (all files, all relevant skills)
+- reviewiq-pr --interactive: ~2-3K words per file (only that file's skills)
 - reviewiq-recheck: ~1-2K words (only changed files + state context)
 
 ## reviewiq-pr --full Flow (default)
 
-1. Fetch all diffs + file contents
-2. Load all relevant skills across all files
-3. Review with cross-file analysis
-4. Post inline comments with ```suggestion blocks
-5. Post markdown report as PR comment (iteration report)
-6. Save state.json + round-N/report.md + history.md
+1. Detect repo, fetch all diffs + file contents
+2. Load state from GitHub PR comment (or start fresh, round 1)
+3. Load all relevant skills across all files
+4. Review with cross-file analysis
+5. Post inline comments with ```suggestion blocks
+6. Post markdown report as PR comment (iteration report)
+7. Save state to GitHub PR hidden comment
 
 ## reviewiq-pr --interactive Flow
 
@@ -122,49 +131,97 @@ For each file:
    - `S` (skip) — skip, move to next
    - `F <N>` (fix) — apply suggestion N
 4. **If no findings**: auto-move to next file (no prompt)
-5. After all files: post summary report, save state
+5. After all files: post summary report, save state to GitHub
 
 ## reviewiq-recheck Flow
 
-1. Load previous state.json
-2. Fetch current code
-3. For each pending finding:
+1. Load state from GitHub PR hidden comment
+2. Increment round number
+3. Fetch current code, compare against `last_reviewed_sha` in state
+4. For each pending finding:
    - Code fixed? → auto-resolve
    - Still broken? → keep pending
    - Changed differently? → needs-review
-4. Check new changes for new issues
-5. Post NEW PR comment with this round's report (append to timeline, don't overwrite)
-6. Post inline comments only for NEW findings
-7. Save updated state + new round report
+5. Check new changes for new issues
+6. Post NEW PR comment with this round's report (append to timeline, don't overwrite)
+7. Post inline comments only for NEW findings
+8. Save updated state to GitHub PR hidden comment
 
 ## reviewiq-resolve Flow
 
-1. Load all state + all round reports
-2. For each pending finding: verify code is fixed
-3. If ALL resolved: post final resolution report + approve PR via `gh pr review --approve`
-4. If still pending: list what's still open, do NOT approve
+**THIS COMMAND WRITES CODE. It edits source files directly to apply fixes.**
 
-## Report Format (round-N/report.md)
+1. Load state from GitHub PR hidden comment (or conversation history)
+2. For EACH pending/open finding:
+   a. Read the target file using the Read tool
+   b. Locate the problematic code at the finding's line number
+   c. **EDIT the file** — use the Edit tool to replace the broken code with `suggested_fix`
+   d. If `suggested_fix` is unclear, write the correct fix using your judgment
+   e. Mark the finding as `resolved` in state
+3. **RUN TESTS** — detect test framework, run tests for modified files, fix until green
+4. Save updated state to GitHub PR hidden comment
+5. Post resolution report as PR comment listing every fix applied + test results
+6. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"`
 
-```markdown
-# ReviewIQ Report — PR #42 Round 1
-**Date**: 2026-04-15
-**Skills**: commandments, security, python, django (~4.2K words)
-**Files**: 4 | **Findings**: 3
+**Key**: resolve = APPLY fixes + RUN TESTS + approve. NOT verify-only.
 
-## Findings
-### 1. [CRITICAL] Retry without backoff — `retry.py:42` — pending
-**Problem**: ...
-**Suggestion**: `time.sleep(min(2 ** attempt * 0.5, 30))`
-**Resolution**: Add exponential backoff
-**Comment**: Thundering herd risk
+## reviewiq-test Flow
 
-## Summary
-| Status | Count |
-|--------|-------|
-| Pending | 3 |
-| Resolved | 0 |
-Assessment: REQUEST CHANGES
+Standalone test command — run tests for PR changes without resolving findings.
+
+1. Detect repo and changed files (from PR diff or branch diff)
+2. Detect test framework:
+   - Python: pytest, unittest (pytest.ini, conftest.py, pyproject.toml)
+   - JS/TS: jest, vitest, mocha (package.json scripts)
+   - Go: `go test`
+   - Java: maven/gradle
+   - Ruby: rspec, minitest
+3. Run targeted tests for changed files first, then full suite if needed
+4. Also run linter/type-checker if available
+5. Report: list each test run, pass/fail, error output for failures
+6. If no tests exist for changed code, suggest what tests should be written
+
+## Posting Inline Comments via gh API
+
+**CRITICAL**: Use this exact format. `-F` (not `-f`) for integers. All fields required.
+
+```bash
+# Single inline comment on a PR
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
+  -f body='**[SEVERITY] Title**
+
+Problem description.
+
+```suggestion
+exact replacement code
+```
+
+_Why_: rationale' \
+  -f commit_id='{head_sha}' \
+  -f path='{file_path}' \
+  -F line={line_number} \
+  -f side='RIGHT' \
+  -f subject_type='line'
+```
+
+**Key rules**:
+- `-F line=47` (integer via `-F`), NOT `-f line=47` (string via `-f`)
+- `subject_type='line'` is REQUIRED
+- `commit_id` is REQUIRED — use the PR's head SHA
+- `side='RIGHT'` for new code (always use RIGHT)
+- Get head SHA: `gh pr view {N} --json headRefOid -q .headRefOid`
+
+**Post PR-level comment** (for summary reports):
+```bash
+gh pr comment {N} --repo {owner}/{repo} --body "$(cat <<'EOF'
+report markdown here
+EOF
+)"
+```
+
+**Approve PR**:
+```bash
+gh pr review {N} --repo {owner}/{repo} --approve --body "All findings resolved."
 ```
 
 ## Rules
@@ -174,5 +231,6 @@ Assessment: REQUEST CHANGES
 3. Match repo conventions
 4. Auto-skip files with no findings (no unnecessary prompts)
 5. Token efficiency — load only relevant skill sections per file
-6. State is truth — always save after every action
-7. Reports are markdown — human-readable iteration history
+6. State is on GitHub — always load from PR comment before acting, save after every action
+7. Round numbers are incremental — never reuse a round number
+8. Reports are markdown — each round is a NEW PR comment (timeline history)
