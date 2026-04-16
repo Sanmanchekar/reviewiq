@@ -55,8 +55,34 @@ The state comment has markers:
 <!-- REVIEWIQ_STATE_END -->
 ```
 
-**Load state**: Search PR comments for `<!-- REVIEWIQ_STATE_COMMENT -->`, decode the base64 between the markers.
-**Save state**: Create or update (PATCH) the comment with new encoded state.
+### How to load state
+```bash
+# Find the state comment ID and extract base64 payload
+STATE_COMMENT=$(gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate \
+  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, body: .body}')
+# Decode: extract text between <!-- REVIEWIQ_STATE_START --> and <!-- REVIEWIQ_STATE_END -->, base64 -d
+```
+If no state comment found, start fresh (round 1, empty findings).
+
+### How to save state (MANDATORY after every command)
+```bash
+# Build the state JSON, base64-encode it, then create or update the comment:
+# If state comment exists (has an ID):
+gh api repos/{owner}/{repo}/issues/comments/{comment_id} -X PATCH \
+  -f body='<!-- REVIEWIQ_STATE_COMMENT -->
+<details><summary>ReviewIQ State (Round N) — X open, Y resolved</summary>
+...summary table...
+</details>
+<!-- REVIEWIQ_STATE_START -->
+{base64_encoded_state}
+<!-- REVIEWIQ_STATE_END -->'
+
+# If no state comment exists yet (first review):
+gh api repos/{owner}/{repo}/issues/{pr}/comments \
+  -f body='...same format...'
+```
+
+**CRITICAL**: You MUST save state after every reviewiq command. Without this, the next command (recheck, resolve) has no history to work with.
 
 ### State Schema
 ```json
@@ -119,7 +145,7 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 4. Review with cross-file analysis
 5. Post inline comments with ```suggestion blocks
 6. Post markdown report as PR comment (iteration report)
-7. Save state to GitHub PR hidden comment
+7. **SAVE STATE** — create the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment with base64 state JSON (see "How to save state" above). This is NOT optional — without it, recheck/resolve will have no history.
 
 ## reviewiq-pr --interactive Flow
 
@@ -159,11 +185,11 @@ For each file:
    d. If `suggested_fix` is unclear, write the correct fix using your judgment
    e. Mark the finding as `resolved` in state
 3. **RUN TESTS** — detect test framework, run tests for modified files, fix until green
-4. Save updated state to GitHub PR hidden comment
+4. **SAVE STATE** — update the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment (mark all findings resolved)
 5. Post resolution report as PR comment listing every fix applied + test results
 6. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"`
 
-**Key**: resolve = APPLY fixes + RUN TESTS + approve. NOT verify-only.
+**Key**: resolve = APPLY fixes + RUN TESTS + SAVE STATE + approve. NOT verify-only.
 
 ## reviewiq-test Flow
 
