@@ -12,11 +12,11 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**3 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, auto-approve when resolved.**
+**4 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, fix code and auto-approve.**
 
 [Quick Start](#quick-start) |
 [Commands](#commands) |
-[Review Folder](#review-folder) |
+[State Storage](#state-storage) |
 [Skills System](#skills-system) |
 [Architecture](#architecture)
 
@@ -26,13 +26,13 @@
 
 ## Overview
 
-ReviewIQ reviews PRs using domain expert skill modules — security, performance, fintech, DevOps, and more. Findings are tracked with statuses (pending/resolved), iterations are saved as markdown reports, and the agent posts inline suggestions directly on the PR.
+ReviewIQ reviews PRs using domain expert skill modules — security, performance, fintech, DevOps, and more. Findings are tracked with statuses (open/resolved) in hidden GitHub PR comments, and the agent posts inline suggestions directly on the PR.
 
 | Command | What it does |
 |---------|-------------|
 | **`reviewiq-pr`** | Review PR — `--full` (default) or `--interactive` (file-by-file) |
 | **`reviewiq-recheck`** | Re-review — auto-resolves fixed findings, flags new issues |
-| **`reviewiq-resolve`** | Fix all findings in code, run tests, mark resolved, auto-approve PR |
+| **`reviewiq-resolve`** | Fix code, run tests, commit+push, mark resolved, auto-approve |
 | **`reviewiq-test`** | Run tests for PR changes — detect framework, targeted + full suite |
 
 **Input**: PR link, PR number, or branch. **Flags**: `--full` (default), `--interactive`.
@@ -47,7 +47,7 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
-Installs: Go binary + gh CLI + 16 skills + Claude Code config. One command, everything ready.
+Auto-installs all dependencies (Go, git, gh CLI) if missing. Then builds binary, copies 16 skills, sets up Claude Code config.
 
 ### Update / Uninstall
 
@@ -73,7 +73,7 @@ curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/uninstall
 # Re-review — check what's fixed, what's still open
 /reviewiq-recheck 42
 
-# Resolve — verify all fixed, approve PR
+# Resolve — fix all findings, test, push, approve
 /reviewiq-resolve 42
 
 # Run tests for changed files
@@ -89,10 +89,11 @@ run tests                         # acts like reviewiq-test
 
 **CLI** (needs `ANTHROPIC_API_KEY`):
 ```bash
-reviewiq pr https://github.com/owner/repo/pull/42          # --full (default)
-reviewiq pr 42 --interactive                                # file-by-file
-reviewiq recheck 42
-reviewiq resolve 42
+reviewiq full https://github.com/owner/repo/pull/42         # full review + post
+reviewiq pr 42 --post                                        # file-by-file + post
+reviewiq check feature/xyz                                   # incremental re-review
+reviewiq status                                              # show findings
+reviewiq approve                                             # check blockers + approve
 ```
 
 ---
@@ -116,10 +117,10 @@ One command, two modes:
 All files at once with cross-file analysis. Auto-posts inline comments + report.
 
 1. Load all relevant skills (~5-8K words)
-2. 4-stage review: Understand → Analyze → Assess → Report
+2. 4-stage review: Understand -> Analyze -> Assess -> Report
 3. Post `suggestion` blocks on each finding line
 4. Post markdown report as PR comment
-5. Save state + report
+5. Save state to GitHub PR hidden comment
 
 #### `--interactive`
 
@@ -136,38 +137,39 @@ Skills: python, django (~2K words)
   [P] Post    [S] Skip    [F 1] Fix
 ```
 
-- **Findings found** → `P` (post) / `S` (skip) / `F <N>` (fix)
-- **No findings** → auto-moves to next file
+- **Findings found** -> `P` (post) / `S` (skip) / `F <N>` (fix)
+- **No findings** -> auto-moves to next file
 
 #### PR Timeline
 
 Each round is a NEW comment (previous rounds stay visible):
 ```
-💬 ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
-💬 ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
-💬 ReviewIQ Resolution — All resolved, APPROVED ✓
+ReviewIQ Report — Round 1 (3 findings, REQUEST CHANGES)
+ReviewIQ Report — Round 2 (2 resolved, 1 new, NEEDS DISCUSSION)
+ReviewIQ Resolution — All resolved, APPROVED
 ```
 
 ---
 
 ### `/reviewiq-recheck` — Re-review with History
 
-Loads previous review state, checks what's fixed, what's still open, flags new issues.
+Loads previous state from GitHub PR comment, checks what's fixed, what's still open, flags new issues.
 
 ```
 /reviewiq-recheck https://github.com/owner/repo/pull/42
 ```
 
 **Flow**:
-1. Load `state.json` from previous review
-2. Fetch current code
-3. For each pending finding:
-   - Code fixed? → **auto-resolve**
-   - Still broken? → **keep pending**
-   - Changed differently? → **needs-review**
-4. Check new changes for new issues
-5. Post update to PR
-6. Save updated state + new round report
+1. Load state from GitHub PR hidden comment
+2. Increment round number
+3. Fetch current code, compare against last reviewed SHA
+4. For each pending finding:
+   - Code fixed? -> **auto-resolve**
+   - Still broken? -> **keep pending**
+   - Changed differently? -> **needs-review**
+5. Check new changes for new issues
+6. Post update to PR
+7. Save updated state to GitHub PR hidden comment
 
 **Output**:
 ```
@@ -175,43 +177,66 @@ Re-review Report — Round 2
 
 | # | Severity | Previous | Current | Note |
 |---|----------|----------|---------|------|
-| 1 | CRITICAL | pending  | resolved | Backoff added ✓ |
+| 1 | CRITICAL | pending  | resolved | Backoff added |
 | 2 | IMPORTANT| pending  | pending  | Still missing idempotency |
-| 3 | NIT      | pending  | resolved | Error message fixed ✓ |
+| 3 | NIT      | pending  | resolved | Error message fixed |
 | 4 | IMPORTANT| —        | NEW      | Null check missing |
 
-Previously: 3 findings → Now: 2 open, 2 resolved
-Assessment: REQUEST CHANGES → NEEDS DISCUSSION
+Previously: 3 findings -> Now: 2 open, 2 resolved
+Assessment: REQUEST CHANGES -> NEEDS DISCUSSION
 ```
 
 ---
 
-### `/reviewiq-resolve` — Fix All & Approve
+### `/reviewiq-resolve` — Fix All, Test & Approve
 
-Applies suggested fixes to code, marks all findings resolved, and auto-approves.
+Checks out the PR branch, applies suggested fixes to code, runs tests, commits+pushes, and auto-approves.
 
 ```
 /reviewiq-resolve https://github.com/owner/repo/pull/42
 ```
 
 **Flow**:
-1. Load state from GitHub PR hidden comment
-2. For each open finding: apply `suggested_fix` to the target file
-3. Mark all findings as `resolved`
-4. Save updated state, post resolution report
-5. Auto-approve PR via `gh pr review --approve`
+1. Checkout PR branch (`gh pr checkout <N>`)
+2. Load state from GitHub PR hidden comment
+3. For each open finding: apply `suggested_fix` to the target file
+4. Run tests (or linter, or syntax checks as fallback)
+5. Commit and push fixes to the PR branch
+6. Save state, post resolution report
+7. Auto-approve PR via `gh pr review --approve`
 
 **Output**:
 ```
 ReviewIQ Resolution — PR #42
 
 Applied fixes:
-  1. [CRITICAL] Retry without backoff — retry.py:42 → backoff added
-  2. [IMPORTANT] Missing idempotency — handler.py:18 → idempotency key added
-  3. [NIT] Typo in error message — utils.py:92 → fixed
+  1. [CRITICAL] Retry without backoff — retry.py:42 -> backoff added
+  2. [IMPORTANT] Missing idempotency — handler.py:18 -> idempotency key added
+  3. [NIT] Typo in error message — utils.py:92 -> fixed
+
+Tests: 12 passed, 0 failed
+Commit: abc1234 "fix: resolve ReviewIQ findings for PR #42"
+Pushed to branch: feature/webhooks
 
 All 3 findings resolved. PR APPROVED.
 ```
+
+---
+
+### `/reviewiq-test` — Run Tests
+
+Standalone test runner for PR changes. Detects framework, runs targeted tests.
+
+```
+/reviewiq-test 42
+```
+
+**Flow**:
+1. Detect changed files from PR diff
+2. Auto-detect test framework (pytest, jest, go test, maven, rspec, etc.)
+3. Run targeted tests for changed files, then full suite if needed
+4. Run linter/type-checker if available
+5. Report pass/fail with error output
 
 ---
 
@@ -270,7 +295,7 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 | Mode | Skills loaded | Per-call cost |
 |------|-------------|---------------|
 | `reviewiq-pr --full` | All relevant across all files | ~5-8K words |
-| `reviewiq-pr` | Per-file only | ~2-3K words/file |
+| `reviewiq-pr --interactive` | Per-file only | ~2-3K words/file |
 | `reviewiq-recheck` | Only changed files | ~1-2K words |
 
 ---
@@ -286,9 +311,9 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 │ PR link      │ Skill Detection       │ Inline PR comments        │
 │ PR number    │  └ per-file loading   │ ```suggestion blocks      │
 │ Branch       │ 4-Stage Review        │ Markdown reports          │
-│ Prior state  │  └ skill-guided       │ State JSON                │
-│              │ State Manager         │ History log               │
-│              │  └ folder per review  │                           │
+│ Prior state  │  └ skill-guided       │ GitHub state comment      │
+│              │ State Manager         │ Commit + push fixes       │
+│              │  └ GitHub PR comment  │                           │
 ├──────────────┼───────────────────────┼───────────────────────────┤
 │              │ Claude Code: no key   │                           │
 │              │ CLI: Claude API       │                           │
@@ -332,7 +357,7 @@ internal/
 .claude/commands/
   reviewiq-pr.md                  /reviewiq-pr — review (--full or --interactive)
   reviewiq-recheck.md             /reviewiq-recheck — re-review with history
-  reviewiq-resolve.md             /reviewiq-resolve — fix all + test + approve
+  reviewiq-resolve.md             /reviewiq-resolve — fix + test + push + approve
   reviewiq-test.md                /reviewiq-test — run tests for PR changes
 install.sh                        One-line installer
 uninstall.sh                      One-line uninstaller
