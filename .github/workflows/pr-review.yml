@@ -3,8 +3,9 @@ name: PR Review Agent
 #   PR opened → full review with inline comments
 #   PR push (synchronize) → incremental re-review
 #   Comment "@review-agent" → ask question
-#   Comment "@review-agent resolve" → check/approve
-#   Comment "@review-agent recheck" → re-review
+#   Comment "@review-agent resolve" → verify fixes + approve
+#   Comment "@review-agent recheck" → re-review with history
+#   Comment "@review-agent test" → run tests for changed files
 
 on:
   pull_request:

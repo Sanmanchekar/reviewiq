@@ -169,6 +169,8 @@ func handleComment(s *state.ReviewState, owner, repoName, fullRepo string, prNum
 		handleResolveComment(s, owner, repoName, fullRepo, prNumber)
 	case strings.HasPrefix(lowerCmd, "recheck") || strings.HasPrefix(lowerCmd, "check"):
 		handleSynchronize(s, owner, repoName, fullRepo, prNumber)
+	case strings.HasPrefix(lowerCmd, "test"):
+		handleTestComment(s, owner, repoName, prNumber)
 	default:
 		// Freeform ask/explain
 		handleAskComment(s, owner, repoName, fullRepo, prNumber, command)
@@ -225,6 +227,30 @@ func handleResolveComment(s *state.ReviewState, owner, repoName, fullRepo string
 	_ = gh.PostPRComment(owner, repoName, prNumber, msg)
 	state.Save(s)
 	log(fmt.Sprintf("Resolve: %d resolved, %d remaining", resolvedCount, len(remaining)))
+}
+
+func handleTestComment(s *state.ReviewState, owner, repoName string, prNumber int) {
+	log("Handling test command")
+	prInfo, err := gh.GetPR(owner, repoName, prNumber)
+	if err != nil {
+		log("Failed to get PR: " + err.Error())
+		return
+	}
+	changedFiles := gitops.GetChangedFiles(prInfo.BaseSHA, prInfo.HeadSHA)
+
+	// Ask Claude to identify and run tests for the changed files
+	fileContents := gitops.ReadFiles(changedFiles)
+	question := fmt.Sprintf("Run tests for the following changed files and report results:\n%s",
+		strings.Join(changedFiles, "\n"))
+
+	response, err := engine.RunAsk(s, question, fileContents, 0, changedFiles)
+	if err != nil {
+		log("Test command failed: " + err.Error())
+		_ = gh.PostPRComment(owner, repoName, prNumber, "## ReviewIQ Test\n\nFailed to run tests: "+err.Error())
+		return
+	}
+	_ = gh.PostPRComment(owner, repoName, prNumber, "## ReviewIQ Test Results\n\n"+response)
+	log("Test results posted")
 }
 
 func handleAskComment(s *state.ReviewState, owner, repoName, fullRepo string, prNumber int, command string) {

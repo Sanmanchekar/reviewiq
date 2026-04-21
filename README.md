@@ -322,6 +322,47 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 
 ---
 
+## CI Integration (GitHub Actions)
+
+ReviewIQ can auto-review PRs in CI. Copy `.github/workflows/pr-review.yml` to your repo and add `ANTHROPIC_API_KEY` to repo secrets.
+
+### Automatic triggers
+
+| Event | What happens |
+|---|---|
+| PR opened | Full review with inline `suggestion` comments |
+| PR push (new commits) | Incremental re-review — auto-resolves fixed findings, flags new issues |
+
+### Comment commands
+
+Comment on any PR to trigger actions:
+
+```
+@review-agent                     → ask a question about the PR
+@review-agent resolve             → verify all fixes applied, approve if clear
+@review-agent recheck             → re-review with full history
+@review-agent test                → run tests for changed files
+@review-agent explain finding 3   → deep dive into a specific finding
+```
+
+### CI ↔ Slash command mapping
+
+| CI trigger | Slash command equivalent |
+|---|---|
+| PR opened | `/reviewiq-pr --full` |
+| PR push | `/reviewiq-recheck` |
+| `@review-agent resolve` | `/reviewiq-resolve` |
+| `@review-agent recheck` | `/reviewiq-recheck` |
+| `@review-agent test` | `/reviewiq-test` |
+
+### Setup
+
+1. Copy workflow: `cp .github/workflows/pr-review.yml <your-repo>/.github/workflows/`
+2. Add secret: `ANTHROPIC_API_KEY` in repo Settings → Secrets
+3. `GITHUB_TOKEN` is auto-provided by GitHub Actions — no setup needed
+
+---
+
 ## Configuration
 
 **No tokens needed locally.** ReviewIQ reuses your existing `gh` CLI auth — if you can push code, you can review PRs.
