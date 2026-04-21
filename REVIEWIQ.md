@@ -211,35 +211,42 @@ Standalone test command — run tests for PR changes without resolving findings.
 
 ## Posting Inline Comments via gh API
 
-**CRITICAL**: Use this exact format. `-F` (not `-f`) for integers. All fields required.
+**CRITICAL**: Do NOT use `/pulls/{N}/comments` — it rejects `line`/`subject_type`.
+Use the **Reviews API** (`/pulls/{N}/reviews`) which posts all inline comments in one batch.
+
+### Post review with inline comments
 
 ```bash
-# Single inline comment on a PR
-gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
-  -f body='**[SEVERITY] Title**
+HEAD_SHA=$(gh pr view {N} --repo {owner}/{repo} --json headRefOid -q .headRefOid)
 
-Problem description.
-
-```suggestion
-exact replacement code
-```
-
-_Why_: rationale' \
-  -f commit_id='{head_sha}' \
-  -f path='{file_path}' \
-  -F line={line_number} \
-  -f side='RIGHT' \
-  -f subject_type='line'
+echo '{
+  "commit_id": "'"$HEAD_SHA"'",
+  "body": "## ReviewIQ Review\n\n**X findings** | Assessment: **REQUEST CHANGES**",
+  "event": "COMMENT",
+  "comments": [
+    {
+      "path": "src/auth.py",
+      "line": 42,
+      "body": "**[CRITICAL] Title**\n\nProblem.\n\n```suggestion\nfix code\n```\n\n_Why_: rationale"
+    },
+    {
+      "path": "src/handler.py",
+      "line": 18,
+      "body": "**[IMPORTANT] Another finding**\n\n..."
+    }
+  ]
+}' | gh api repos/{owner}/{repo}/pulls/{N}/reviews --input -
 ```
 
 **Key rules**:
-- `-F line=47` (integer via `-F`), NOT `-f line=47` (string via `-f`)
-- `subject_type='line'` is REQUIRED
-- `commit_id` is REQUIRED — use the PR's head SHA
-- `side='RIGHT'` for new code (always use RIGHT)
-- Get head SHA: `gh pr view {N} --json headRefOid -q .headRefOid`
+- Use `--input -` with piped JSON, NOT `-f` flags
+- `event`: `"COMMENT"`, `"REQUEST_CHANGES"`, or `"APPROVE"`
+- Each comment: `path` (string, must be a file in the PR diff), `line` (integer, line in NEW file), `body` (string)
+- `commit_id`: PR head SHA (required)
+- All findings go in ONE review call — do NOT post individual comments
+- `path` MUST be a file that exists in the PR diff, otherwise GitHub returns "Path could not be resolved"
 
-**Post PR-level comment** (for summary reports):
+### Post PR-level comment (for summary reports)
 ```bash
 gh pr comment {N} --repo {owner}/{repo} --body "$(cat <<'EOF'
 report markdown here
@@ -247,7 +254,7 @@ EOF
 )"
 ```
 
-**Approve PR**:
+### Approve PR
 ```bash
 gh pr review {N} --repo {owner}/{repo} --approve --body "All findings resolved."
 ```

@@ -213,28 +213,15 @@ func PostPRComment(owner, repo string, number int, body string) error {
 	return err
 }
 
-func PostInlineComment(owner, repo string, number int, commitSHA string, comment InlineComment) error {
-	payload := map[string]interface{}{
-		"body":         comment.Body,
-		"commit_id":    commitSHA,
-		"path":         comment.Path,
-		"line":         comment.Line,
-		"side":         "RIGHT",
-		"subject_type": "line",
-	}
-	_, err := apiRequest("POST", fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, number), payload)
-	return err
-}
-
+// PostReview posts a review with inline comments using the Reviews API.
+// Do NOT use /pulls/{N}/comments — it rejects line/subject_type.
 func PostReview(owner, repo string, number int, commitSHA, body, event string, comments []InlineComment) error {
 	var reviewComments []map[string]interface{}
 	for _, c := range comments {
 		reviewComments = append(reviewComments, map[string]interface{}{
-			"path":         c.Path,
-			"line":         c.Line,
-			"side":         "RIGHT",
-			"body":         c.Body,
-			"subject_type": "line",
+			"path": c.Path,
+			"line": c.Line,
+			"body": c.Body,
 		})
 	}
 
