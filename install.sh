@@ -383,9 +383,11 @@ install_claude_config() {
     # Install slash commands globally so they work in every repo
     step "Installing slash commands to ~/.claude/commands/..."
     reviewiq init-global 2>/dev/null || {
-        # Fallback: write commands directly if init-global not available
-        for cmd_file in "$HOME/.reviewiq/commands/"*.md 2>/dev/null; do
-            cp "$cmd_file" "$CLAUDE_DIR/commands/" 2>/dev/null
+        # Fallback: copy commands directly if init-global not available
+        local cmd_files
+        cmd_files=$(ls "$HOME/.reviewiq/commands/"*.md 2>/dev/null || true)
+        for cmd_file in $cmd_files; do
+            cp "$cmd_file" "$CLAUDE_DIR/commands/" 2>/dev/null || true
         done
     }
     local cmd_count
