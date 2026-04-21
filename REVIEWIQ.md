@@ -216,11 +216,15 @@ Use the **Reviews API** (`/pulls/{N}/reviews`) which posts all inline comments i
 
 ### Post review with inline comments
 
+**Write JSON to a temp file** — do NOT use `echo` pipe. Backticks in ` ```suggestion ``` ` blocks and quotes in findings break shell escaping.
+
 ```bash
 HEAD_SHA=$(gh pr view {N} --repo {owner}/{repo} --json headRefOid -q .headRefOid)
 
-echo '{
-  "commit_id": "'"$HEAD_SHA"'",
+# 1. Write JSON to temp file (single-quoted heredoc = no shell interpretation)
+cat > /tmp/reviewiq_payload.json << 'ENDOFJSON'
+{
+  "commit_id": "HEAD_SHA_PLACEHOLDER",
   "body": "## ReviewIQ Review\n\n**X findings** | Assessment: **REQUEST CHANGES**",
   "event": "COMMENT",
   "comments": [
@@ -228,18 +232,20 @@ echo '{
       "path": "src/auth.py",
       "line": 42,
       "body": "**[CRITICAL] Title**\n\nProblem.\n\n```suggestion\nfix code\n```\n\n_Why_: rationale"
-    },
-    {
-      "path": "src/handler.py",
-      "line": 18,
-      "body": "**[IMPORTANT] Another finding**\n\n..."
     }
   ]
-}' | gh api repos/{owner}/{repo}/pulls/{N}/reviews --input -
+}
+ENDOFJSON
+
+# 2. Replace placeholder with actual SHA
+sed -i '' "s/HEAD_SHA_PLACEHOLDER/$HEAD_SHA/" /tmp/reviewiq_payload.json
+
+# 3. Post
+gh api repos/{owner}/{repo}/pulls/{N}/reviews --input /tmp/reviewiq_payload.json
 ```
 
 **Key rules**:
-- Use `--input -` with piped JSON, NOT `-f` flags
+- Always use temp file + `--input`, never `echo` pipe (backticks break shell)
 - `event`: `"COMMENT"`, `"REQUEST_CHANGES"`, or `"APPROVE"`
 - Each comment: `path` (string, must be a file in the PR diff), `line` (integer, line in NEW file), `body` (string)
 - `commit_id`: PR head SHA (required)
