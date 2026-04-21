@@ -30,7 +30,7 @@ func main() {
 		Version: version,
 	}
 
-	root.AddCommand(initCmd(), reviewCmd(), reviewPRCmd(), reviewFullCmd(),
+	root.AddCommand(initCmd(), initGlobalCmd(), reviewCmd(), reviewPRCmd(), reviewFullCmd(),
 		checkCmd(), statusCmd(), explainCmd(), askCmd(),
 		resolveCmd(), retractCmd(), wontfixCmd(), approveCmd(), ciCmd())
 
@@ -165,6 +165,39 @@ func initCmd() *cobra.Command {
 			fmt.Println("  /reviewiq-recheck <PR>")
 			fmt.Println("  /reviewiq-resolve <PR>")
 			fmt.Println("  /reviewiq-test <PR>")
+		},
+	}
+}
+
+func initGlobalCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "init-global",
+		Short: "Install slash commands globally to ~/.claude/commands/",
+		Run: func(cmd *cobra.Command, args []string) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				color.Red("Cannot detect home directory: %s", err)
+				os.Exit(1)
+			}
+			globalDir := filepath.Join(home, ".claude", "commands")
+			os.MkdirAll(globalDir, 0o755)
+
+			for name, content := range claudeCommands {
+				path := filepath.Join(globalDir, name+".md")
+				os.WriteFile(path, []byte(content), 0o644)
+			}
+
+			// Clean up old review-*.md files
+			oldFiles, _ := filepath.Glob(filepath.Join(globalDir, "review-*.md"))
+			for _, old := range oldFiles {
+				os.Remove(old)
+			}
+
+			color.Green("Installed %d slash commands globally:", len(claudeCommands))
+			for name := range claudeCommands {
+				fmt.Printf("  /%-24s ~/.claude/commands/%s.md\n", name, name)
+			}
+			fmt.Println("\nAvailable in every repo — no per-repo init needed.")
 		},
 	}
 }

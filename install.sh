@@ -371,12 +371,27 @@ install_claude_config() {
     step "Setting up Claude Code global config..."
 
     mkdir -p "$CLAUDE_DIR"
+    mkdir -p "$CLAUDE_DIR/commands"
 
     # REVIEWIQ.md was already copied from repo in install_binary()
     if [[ -f "$CLAUDE_DIR/REVIEWIQ.md" ]]; then
         info "~/.claude/REVIEWIQ.md installed (from repo)"
     else
         warn "REVIEWIQ.md not found — install may have failed"
+    fi
+
+    # Install slash commands globally so they work in every repo
+    step "Installing slash commands to ~/.claude/commands/..."
+    reviewiq init-global 2>/dev/null || {
+        # Fallback: write commands directly if init-global not available
+        for cmd_file in "$HOME/.reviewiq/commands/"*.md 2>/dev/null; do
+            cp "$cmd_file" "$CLAUDE_DIR/commands/" 2>/dev/null
+        done
+    }
+    local cmd_count
+    cmd_count=$(ls "$CLAUDE_DIR/commands/reviewiq-"*.md 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$cmd_count" -gt 0 ]]; then
+        info "$cmd_count slash commands installed globally"
     fi
 
     # Add @REVIEWIQ.md to CLAUDE.md if not already there
@@ -399,25 +414,21 @@ EOF
     fi
 }
 
-# ── Step 4: Init current repo ─────────────────────────────────────────────────
+# ── Step 4: Init global + optional repo ───────────────────────────────────────
 
 repo_init() {
-    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-        info "Not inside a git repo — skipping repo init."
-        info "Run 'reviewiq init </dev/null' inside any git repo to set up slash commands."
-        return
+    # Always install commands globally
+    reviewiq init-global </dev/null
+
+    # If inside a git repo, also set up .pr-review/agent.md and skills
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        local repo_root
+        repo_root="$(git rev-parse --show-toplevel)"
+        step "Setting up repo at $repo_root..."
+        cd "$repo_root"
+        reviewiq init </dev/null
+        cd - >/dev/null
     fi
-
-    local repo_root
-    repo_root="$(git rev-parse --show-toplevel)"
-
-    step "Setting up repo at $repo_root..."
-    cd "$repo_root"
-
-    # Run reviewiq init </dev/null (creates .pr-review/, .claude/commands/reviewiq-*, cleans old review-*)
-    reviewiq init </dev/null
-
-    cd - >/dev/null
 }
 
 # ── Verify ───────────────────────────────────────────────────────────────────
