@@ -342,6 +342,7 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 ~/.local/bin/reviewiq             CLI binary
 ~/.reviewiq/skills/               16 skill modules
 ~/.claude/REVIEWIQ.md             Claude Code global config
+~/.claude/commands/reviewiq-*.md  4 slash commands (global, work in every repo)
 
 # Per-repo
 .pr-review/skills/                Skill files (customizable per repo)
@@ -354,11 +355,6 @@ GitHub PR hidden comment           Base64-encoded state in <!-- REVIEWIQ_STATE_C
 cmd/reviewiq/main.go              CLI (Go + cobra)
 internal/
   state/ engine/ git/ skills/ github/ ci/
-.claude/commands/
-  reviewiq-pr.md                  /reviewiq-pr — review (--full or --interactive)
-  reviewiq-recheck.md             /reviewiq-recheck — re-review with history
-  reviewiq-resolve.md             /reviewiq-resolve — fix + test + push + approve
-  reviewiq-test.md                /reviewiq-test — run tests for PR changes
 install.sh                        One-line installer
 uninstall.sh                      One-line uninstaller
 ```

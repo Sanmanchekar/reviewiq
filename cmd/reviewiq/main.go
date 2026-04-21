@@ -108,7 +108,7 @@ func loadState(prNumber int, repo string) *state.ReviewState {
 func initCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize .pr-review/ and .claude/commands/ in current repo",
+		Short: "Initialize .pr-review/ in current repo (skills + agent protocol)",
 		Run: func(cmd *cobra.Command, args []string) {
 			created := 0
 
@@ -120,22 +120,14 @@ func initCmd() *cobra.Command {
 				created++
 			}
 
-			// .claude/commands/ — slash commands for Claude Code
+			// Clean up old per-repo slash commands (now installed globally)
 			claudeDir := filepath.Join(".claude", "commands")
-			os.MkdirAll(claudeDir, 0o755)
-
-			// Clean up old review-*.md files (renamed to reviewiq-*.md)
-			oldFiles, _ := filepath.Glob(filepath.Join(claudeDir, "review-*.md"))
-			for _, old := range oldFiles {
-				os.Remove(old)
-				fmt.Printf("  Removed old: %s\n", filepath.Base(old))
-			}
-
-			// Always overwrite slash commands — they're generated, not user-edited
-			for name, content := range claudeCommands {
-				path := filepath.Join(claudeDir, name+".md")
-				os.WriteFile(path, []byte(content), 0o644)
-				created++
+			for _, pattern := range []string{"review-*.md", "reviewiq-*.md"} {
+				oldFiles, _ := filepath.Glob(filepath.Join(claudeDir, pattern))
+				for _, old := range oldFiles {
+					os.Remove(old)
+					fmt.Printf("  Removed per-repo: %s (now global)\n", filepath.Base(old))
+				}
 			}
 
 			// Clean up old .gitignore entry for local state (no longer used)
@@ -148,23 +140,13 @@ func initCmd() *cobra.Command {
 
 			if created == 0 {
 				fmt.Println("Already initialized. All files exist.")
-				return
+			} else {
+				color.Green("Initialized ReviewIQ:\n")
+				fmt.Println("  .pr-review/agent.md              — review protocol")
+				fmt.Println("  .pr-review/skills/               — add skill .md files here")
 			}
-
-			color.Green("Initialized ReviewIQ:\n")
-			fmt.Println("  .pr-review/agent.md              — review protocol")
-			fmt.Println("  .pr-review/skills/               — add skill .md files here")
-			fmt.Println()
-			fmt.Printf("  Claude Code commands (%d):\n", len(claudeCommands))
-			for name := range claudeCommands {
-				fmt.Printf("    /%-24s .claude/commands/%s.md\n", name, name)
-			}
-			fmt.Println()
-			fmt.Println("Usage:")
-			fmt.Println("  /reviewiq-pr <PR> [--full|--interactive]")
-			fmt.Println("  /reviewiq-recheck <PR>")
-			fmt.Println("  /reviewiq-resolve <PR>")
-			fmt.Println("  /reviewiq-test <PR>")
+			fmt.Println("\nSlash commands are installed globally (~/.claude/commands/).")
+			fmt.Println("Run 'reviewiq init-global' to reinstall them.")
 		},
 	}
 }
