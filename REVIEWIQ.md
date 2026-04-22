@@ -163,7 +163,8 @@ For each file:
 
 1. Load state from GitHub PR hidden comment
 2. Increment round number
-3. Fetch current code, compare against `last_reviewed_sha` in state
+3. **Pull latest code**: `git fetch origin && git pull` — ensures local repo has all new commits for incremental diff
+4. Fetch current code, compare against `last_reviewed_sha` in state
 4. For each pending finding:
    - Code fixed? → auto-resolve
    - Still broken? → keep pending

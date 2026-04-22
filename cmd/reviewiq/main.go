@@ -210,7 +210,8 @@ $ARGUMENTS: PR link, PR number, or branch.
 1. Detect repo: ` + "`gh repo view --json nameWithOwner -q .nameWithOwner`" + `
 2. Load state from GitHub PR hidden comment (` + "`<!-- REVIEWIQ_STATE_COMMENT -->`" + `)
 3. Increment round number: new round = count of previous rounds + 1
-4. Fetch current code, compare against last reviewed SHA in state
+4. **Pull latest code**: ` + "`git fetch origin && git pull`" + ` — ensures local repo has new commits for incremental diff
+5. Fetch current code, compare against last reviewed SHA in state
 5. For each pending finding:
    - Code fixed? → auto-resolve, update status history
    - Still broken? → keep pending
