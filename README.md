@@ -242,7 +242,15 @@ Standalone test runner for PR changes. Detects framework, runs targeted tests.
 
 ## State Storage
 
-State lives in a **hidden GitHub PR comment** — no local files. This makes state available across machines, CI, and team members.
+State lives in **hidden GitHub PR comments** — no local files. Each round creates a new state comment (never overwrites previous rounds), giving a full audit trail.
+
+```
+💬 ReviewIQ State (Round 1) — 10 open, 0 resolved
+💬 ReviewIQ State (Round 2) — 3 open, 7 resolved
+💬 ReviewIQ State (Round 3) — 0 open, 10 resolved   ← latest, used by recheck/resolve
+```
+
+Load always picks the highest round. Previous rounds are preserved for history.
 
 ### Finding Statuses
 
