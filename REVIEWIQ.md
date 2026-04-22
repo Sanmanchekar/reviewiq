@@ -57,32 +57,33 @@ The state comment has markers:
 
 ### How to load state
 ```bash
-# Find the state comment ID and extract base64 payload
-STATE_COMMENT=$(gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate \
-  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, body: .body}')
+# Find ALL state comments, pick the one with highest round number
+# Each round has its own comment: <!-- REVIEWIQ_STATE_ROUND_1 -->, <!-- REVIEWIQ_STATE_ROUND_2 -->, etc.
+gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate \
+  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, body: .body}'
+# If multiple found: pick the one with highest ROUND_N marker
 # Decode: extract text between <!-- REVIEWIQ_STATE_START --> and <!-- REVIEWIQ_STATE_END -->, base64 -d
 ```
 If no state comment found, start fresh (round 1, empty findings).
 
 ### How to save state (MANDATORY after every command)
+
+**Always create a NEW comment — never PATCH/overwrite previous rounds.** Each round's state is preserved for audit trail.
+
 ```bash
-# Build the state JSON, base64-encode it, then create or update the comment:
-# If state comment exists (has an ID):
-gh api repos/{owner}/{repo}/issues/comments/{comment_id} -X PATCH \
+# Always POST new comment (never update old ones)
+gh api repos/{owner}/{repo}/issues/{pr}/comments \
   -f body='<!-- REVIEWIQ_STATE_COMMENT -->
+<!-- REVIEWIQ_STATE_ROUND_N -->
 <details><summary>ReviewIQ State (Round N) — X open, Y resolved</summary>
 ...summary table...
 </details>
 <!-- REVIEWIQ_STATE_START -->
 {base64_encoded_state}
 <!-- REVIEWIQ_STATE_END -->'
-
-# If no state comment exists yet (first review):
-gh api repos/{owner}/{repo}/issues/{pr}/comments \
-  -f body='...same format...'
 ```
 
-**CRITICAL**: You MUST save state after every reviewiq command. Without this, the next command (recheck, resolve) has no history to work with.
+**CRITICAL**: You MUST save state after every reviewiq command. Always POST new, never PATCH — previous round states are preserved for history.
 
 ### State Schema
 ```json

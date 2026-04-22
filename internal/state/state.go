@@ -341,18 +341,26 @@ const (
 	stateCommentHeader = "<!-- REVIEWIQ_STATE_COMMENT -->"
 )
 
+func stateRoundMarker(round int) string {
+	return fmt.Sprintf("<!-- REVIEWIQ_STATE_ROUND_%d -->", round)
+}
+
 func LoadRemote(repo string, prNumber int) (*ReviewState, error) {
-	_, s, err := findStateComment(repo, prNumber)
+	_, s, err := findLatestStateComment(repo, prNumber)
 	return s, err
 }
 
+// SaveRemote always creates a NEW comment (never overwrites previous rounds).
+// Each round's state is preserved as a separate hidden comment for audit trail.
 func SaveRemote(s *ReviewState) error {
 	encoded, err := encodeState(s)
 	if err != nil {
 		return err
 	}
 	sm := s.Summary
+	round := len(s.ReviewRounds)
 	body := fmt.Sprintf(`%s
+%s
 <details>
 <summary>ReviewIQ State (Round %d) — %d open, %d resolved</summary>
 
@@ -370,17 +378,11 @@ func SaveRemote(s *ReviewState) error {
 %s
 %s
 %s`,
-		stateCommentHeader, len(s.ReviewRounds), sm.Open, sm.Resolved,
+		stateCommentHeader, stateRoundMarker(round), round, sm.Open, sm.Resolved,
 		sm.TotalFindings, sm.Open, sm.Resolved, sm.Wontfix, sm.Retracted, sm.Assessment,
 		stateMarkerStart, encoded, stateMarkerEnd)
 
-	commentID, _, err := findStateComment(s.PR.Repo, s.PR.Number)
-	if err != nil {
-		return err
-	}
-	if commentID > 0 {
-		return ghAPI("PATCH", fmt.Sprintf("/repos/%s/issues/comments/%d", s.PR.Repo, commentID), map[string]string{"body": body})
-	}
+	// Always POST new comment — preserves all previous round states
 	return ghAPI("POST", fmt.Sprintf("/repos/%s/issues/%d/comments", s.PR.Repo, s.PR.Number), map[string]string{"body": body})
 }
 
@@ -419,7 +421,8 @@ func hasGitHubAuth() bool {
 	return err == nil && token != ""
 }
 
-func findStateComment(repo string, prNumber int) (int, *ReviewState, error) {
+// findLatestStateComment finds all state comments and returns the one with the highest round number.
+func findLatestStateComment(repo string, prNumber int) (int, *ReviewState, error) {
 	token, err := github.GetToken()
 	if err != nil {
 		return 0, nil, nil
@@ -442,6 +445,11 @@ func findStateComment(repo string, prNumber int) (int, *ReviewState, error) {
 		return 0, nil, nil
 	}
 	re := regexp.MustCompile(regexp.QuoteMeta(stateMarkerStart) + `\n(.+?)\n` + regexp.QuoteMeta(stateMarkerEnd))
+
+	var bestID int
+	var bestState *ReviewState
+	bestRound := -1
+
 	for _, c := range comments {
 		if !strings.Contains(c.Body, stateCommentHeader) {
 			continue
@@ -458,7 +466,15 @@ func findStateComment(repo string, prNumber int) (int, *ReviewState, error) {
 		if err := json.Unmarshal(decoded, &s); err != nil {
 			continue
 		}
-		return c.ID, &s, nil
+		round := len(s.ReviewRounds)
+		if round > bestRound {
+			bestRound = round
+			bestID = c.ID
+			bestState = &s
+		}
+	}
+	if bestState != nil {
+		return bestID, bestState, nil
 	}
 	return 0, nil, nil
 }
