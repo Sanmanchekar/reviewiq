@@ -217,7 +217,7 @@ Use the **Reviews API** (`/pulls/{N}/reviews`) which posts all inline comments i
 
 ### Post review with inline comments
 
-**Use the Write tool to create `/tmp/reviewiq_payload.json`** — do NOT use Edit (file won't exist yet) and do NOT use `echo` pipe (backticks in ` ```suggestion ``` ` blocks break shell escaping).
+**Use Bash with `cat` heredoc to create `/tmp/reviewiq_payload.json`** — do NOT use the Write tool (path resolution issues) or Edit tool (file won't exist) or `echo` pipe (backticks break shell escaping). Always use Bash with a single-quoted heredoc delimiter.
 
 ```bash
 HEAD_SHA=$(gh pr view {N} --repo {owner}/{repo} --json headRefOid -q .headRefOid)
