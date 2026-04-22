@@ -216,7 +216,7 @@ Use the **Reviews API** (`/pulls/{N}/reviews`) which posts all inline comments i
 
 ### Post review with inline comments
 
-**Write JSON to a temp file** — do NOT use `echo` pipe. Backticks in ` ```suggestion ``` ` blocks and quotes in findings break shell escaping.
+**Use the Write tool to create `/tmp/reviewiq_payload.json`** — do NOT use Edit (file won't exist yet) and do NOT use `echo` pipe (backticks in ` ```suggestion ``` ` blocks break shell escaping).
 
 ```bash
 HEAD_SHA=$(gh pr view {N} --repo {owner}/{repo} --json headRefOid -q .headRefOid)
