@@ -108,6 +108,21 @@ var domainIndicators = map[string]domainDef{
 		files:    []string{"privacy", "consent", "gdpr", "ccpa", "dpdp", "anonymiz", "pii", "data_protection", "data_deletion"},
 		skillFile: "data-privacy",
 	},
+	"airflow": {
+		imports:  []string{"airflow", "from airflow", "DAG", "PythonOperator", "BashOperator", "TaskGroup", "XCom", "BaseOperator", "dag_id", "schedule_interval"},
+		files:    []string{"dag", "airflow", "dags/", "pipeline"},
+		skillFile: "airflow",
+	},
+	"kafka": {
+		imports:  []string{"kafka", "confluent_kafka", "kafka-python", "aiokafka", "KafkaProducer", "KafkaConsumer", "kafka.clients", "org.apache.kafka", "kafkajs", "node-rdkafka"},
+		files:    []string{"kafka", "producer", "consumer", "topic", "broker"},
+		skillFile: "kafka",
+	},
+	"messaging": {
+		imports:  []string{"rabbitmq", "amqp", "pika", "celery", "kombu", "bullmq", "bull", "amqplib", "sqs", "SendMessage", "ReceiveMessage", "rq", "redis_queue", "huey"},
+		files:    []string{"rabbitmq", "celery", "worker", "queue", "tasks.py", "celeryconfig", "sqs", "bullmq"},
+		skillFile: "messaging",
+	},
 }
 
 var alwaysLoad = []string{"commandments", "security", "scalability", "stability", "maintainability", "performance"}

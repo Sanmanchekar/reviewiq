@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**4 commands. 16 review skills. Review PRs, post inline suggestions, track findings across iterations, fix code and auto-approve.**
+**4 commands. 19 review skills. Review PRs, post inline suggestions, track findings across iterations, fix code and auto-approve.**
 
 [Quick Start](#quick-start) |
 [Commands](#commands) |
@@ -289,6 +289,9 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 | **Notifications** | sms, twilio, sendgrid, fcm, whatsapp |
 | **Financial Microservices** | saga, outbox, event_sourcing, kafka |
 | **Data Privacy** | gdpr, ccpa, dpdp, consent, pii |
+| **Airflow** | DAG, PythonOperator, BashOperator, XCom, schedule_interval, dags/ |
+| **Kafka** | confluent_kafka, KafkaProducer, KafkaConsumer, aiokafka, kafkajs |
+| **Messaging** | RabbitMQ, Celery, SQS, BullMQ, Redis queues, pika, amqp |
 
 ### Token Budget
 
