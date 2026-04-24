@@ -47,7 +47,7 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
-Auto-installs all dependencies (Go, git, gh CLI) if missing. Then builds binary, copies 16 skills, sets up Claude Code config.
+Auto-installs all dependencies (Go, git, gh CLI) if missing. Then builds binary, copies 19 skills, sets up Claude Code config.
 
 ### Update / Uninstall
 
@@ -162,14 +162,15 @@ Loads previous state from GitHub PR comment, checks what's fixed, what's still o
 **Flow**:
 1. Load state from GitHub PR hidden comment
 2. Increment round number
-3. Fetch current code, compare against last reviewed SHA
-4. For each pending finding:
-   - Code fixed? -> **auto-resolve**
-   - Still broken? -> **keep pending**
-   - Changed differently? -> **needs-review**
+3. Pull latest code, compare against last reviewed SHA
+4. **Auto-resolution** — for each open finding:
+   - Read the file, check the specific line (±5 lines context)
+   - Mark `resolved` if: problematic code gone, fix applied, line deleted, or file removed
+   - Keep `open` only if exact same problematic pattern is still present
 5. Check new changes for new issues
-6. Post update to PR
-7. Save updated state to GitHub PR hidden comment
+6. **Skip prompt** — show remaining open findings, type `W <N>` or `W 1,3,5` to mark as `wontfix` (manageable, accepted risk), or Enter to keep all open
+7. Post update to PR
+8. Save updated state to GitHub PR hidden comment
 
 **Output**:
 ```
@@ -199,11 +200,12 @@ Checks out the PR branch, applies suggested fixes to code, runs tests, commits+p
 **Flow**:
 1. Checkout PR branch (`gh pr checkout <N>`)
 2. Load state from GitHub PR hidden comment
-3. For each open finding: apply `suggested_fix` to the target file
-4. Run tests (or linter, or syntax checks as fallback)
-5. Commit and push fixes to the PR branch
-6. Save state, post resolution report
-7. Auto-approve PR via `gh pr review --approve`
+3. **Skip prompt** — list all open findings, type `W <N>` or `W 1,3,5` to mark as `wontfix` (skip), or Enter to fix all
+4. For each remaining open finding: apply `suggested_fix` to the target file
+5. Run tests (or linter, or syntax checks as fallback)
+6. Commit and push fixes to the PR branch
+7. Save state, post resolution report (fixes applied + skipped findings)
+8. Auto-approve PR via `gh pr review --approve`
 
 **Output**:
 ```
@@ -258,7 +260,7 @@ Load always picks the highest round. Previous rounds are preserved for history.
 |--------|---------|
 | `open` | Found, not yet fixed |
 | `resolved` | Fix applied/confirmed |
-| `wontfix` | Developer won't fix (accepted) |
+| `wontfix` | Manageable / accepted risk — marked via `W <N>` during recheck or resolve |
 | `retracted` | Finding was wrong |
 | `partially_fixed` | Partially addressed |
 
@@ -392,7 +394,7 @@ Comment on any PR to trigger actions:
 ```
 # Installed globally
 ~/.local/bin/reviewiq             CLI binary
-~/.reviewiq/skills/               16 skill modules
+~/.reviewiq/skills/               19 skill modules
 ~/.claude/REVIEWIQ.md             Claude Code global config
 ~/.claude/commands/reviewiq-*.md  4 slash commands (global, work in every repo)
 
