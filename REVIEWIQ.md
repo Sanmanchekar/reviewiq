@@ -133,6 +133,16 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 - Import scanning → framework section from frameworks.md
 - Filename patterns → devops.md, fintech.md, fraud.md, etc.
 
+**Database skills** (load on the matching triggers below):
+- `sql.md` — `.sql` files; raw SQL strings (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `JOIN`); `cursor.execute`, `db.query`, `conn.exec`
+- `migrations.md` — paths `migrations/`, `db/migrate/`, `alembic/versions/`, `flyway/`, `liquibase/`; filenames matching `V<n>__*.sql`, `*_migration.py`, `*.changeset.xml`
+- `orm.md` — imports of `django.db`, `sqlalchemy`, `prisma`, `@prisma/client`, `typeorm`, `sequelize`, `mongoose`, `gorm`, `hibernate`, `entity`, `@Entity`
+- `transactions.md` — `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `transaction.atomic`, `@Transactional`, `db.transaction`, `SELECT ... FOR UPDATE`, `pg_advisory_lock`, `SETNX`+lock semantics
+- `postgres.md` — `psycopg2`, `asyncpg`, `pg`, `node-postgres`, `pgx`, `gorm.io/driver/postgres`; PG-specific syntax (`JSONB`, `RETURNING`, `ON CONFLICT`, `CONCURRENTLY`); `.sql` files with PG dialect
+- `redis.md` — `redis`, `ioredis`, `redis-py`, `go-redis`, `lettuce`, `jedis`, `StackExchange.Redis`; commands `SETNX`, `MGET`, `XADD`, `SUBSCRIBE`, `EVAL`
+- `mongodb.md` — `pymongo`, `mongoose`, `mongodb` (node), `MongoClient`, `@Document`, aggregation `$match`/`$lookup`/`$group`, `findOneAndUpdate`
+- `elasticsearch.md` — `elasticsearch`, `@elastic/elasticsearch`, `opensearch`, `org.elasticsearch.client`; query DSL (`_search`, `bool`, `match`, `term`, `aggs`); index APIs (`_bulk`, `_mapping`)
+
 **Token budget**:
 - reviewiq-pr --full: ~5-8K words (all files, all relevant skills)
 - reviewiq-pr --interactive: ~2-3K words per file (only that file's skills)
@@ -166,14 +176,20 @@ For each file:
 2. Increment round number
 3. **Pull latest code**: `git fetch origin && git pull` — ensures local repo has all new commits for incremental diff
 4. Fetch current code, compare against `last_reviewed_sha` in state
-4. For each pending finding:
+5. For each pending finding:
    - Code fixed? → auto-resolve
    - Still broken? → keep pending
    - Changed differently? → needs-review
-5. Check new changes for new issues
-6. Post NEW PR comment with this round's report (append to timeline, don't overwrite)
-7. Post inline comments only for NEW findings
-8. Save updated state to GitHub PR hidden comment
+6. Check new changes for new issues
+7. **Skip prompt** — list remaining `open` findings (after auto-resolution pass) in a numbered table, then ask:
+   ```
+   Mark any as wontfix? Type `W <N>` or `W 1,3,5`, or Enter to keep all open:
+   ```
+   - For each ID marked: set `status: wontfix`, append a `status_history` entry with `note: "Skipped by user during recheck"`
+   - **No-op recheck guard**: if head SHA is unchanged AND no statuses changed via this prompt, skip posting a new round report. Still save state if anything was marked wontfix.
+8. Post NEW PR comment with this round's report (append to timeline, don't overwrite). Include any wontfix transitions.
+9. Post inline comments only for NEW findings
+10. Save updated state to GitHub PR hidden comment
 
 ## reviewiq-resolve Flow
 
@@ -181,19 +197,32 @@ For each file:
 
 1. Checkout the PR branch: `gh pr checkout <N>`
 2. Load state from GitHub PR hidden comment (or conversation history)
-3. For EACH pending/open finding:
+3. **Skip prompt** — BEFORE editing any file, list every `open` finding in a numbered table (id / severity / file:line / title), then ask:
+   ```
+   Mark any as wontfix? Type `W <N>` or `W 1,3,5`, or Enter to fix all:
+   ```
+   - For each ID marked: set `status: wontfix`, append a `status_history` entry with `note: "Skipped by user during resolve"`. Skip these in step 4.
+   - If user hits Enter: proceed with all open findings.
+   - If ALL findings are marked wontfix: skip steps 4–5 (no edits, no commit), jump to step 6 to save state and post a "no fixes applied — N findings marked wontfix" report. Do NOT auto-approve unless the user explicitly says so.
+4. For EACH remaining open finding:
    a. Read the target file using the Read tool
    b. Locate the problematic code at the finding's line number
    c. **EDIT the file** — use the Edit tool to replace the broken code with `suggested_fix`
    d. If `suggested_fix` is unclear, write the correct fix using your judgment
    e. Mark the finding as `resolved` in state
-4. **RUN TESTS** — detect test framework, run tests for modified files, fix until green. If no tests: run linter (flake8/mypy/eslint/tsc). If no linter: at minimum syntax checks.
-5. **COMMIT AND PUSH** — `git add`, `git commit -m "fix: resolve ReviewIQ findings"`, `git push`. Without push, the PR still has broken code and approval is meaningless.
-6. **SAVE STATE** — update the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment (mark all findings resolved)
-7. Post resolution report as PR comment listing every fix applied + test results
-8. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"`
+   f. **If user rejects the Edit**: do NOT silently stop. Ask:
+      ```
+      Edit rejected on finding #<id>. Mark as wontfix and continue? [Y/n]
+      ```
+      - `Y` (default): set `status: wontfix` with note `"Edit rejected by user during resolve"`, move to next finding
+      - `n`: abort — save state with this finding still `open`, post a partial-resolution report listing applied vs. aborted, do NOT approve
+5. **RUN TESTS** — detect test framework, run tests for modified files, fix until green. If no tests: run linter (flake8/mypy/eslint/tsc). If no linter: at minimum syntax checks.
+6. **COMMIT AND PUSH** — `git add`, `git commit -m "fix: resolve ReviewIQ findings"`, `git push`. Without push, the PR still has broken code and approval is meaningless. Skip if no edits were applied.
+7. **SAVE STATE** — update the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment (mark resolved/wontfix per finding)
+8. Post resolution report as PR comment listing every fix applied + skipped findings + test results
+9. Auto-approve PR: `gh pr review <N> --repo <REPO> --approve --body "All findings resolved and tests passing — ReviewIQ"` — only if at least one fix was applied AND no findings remain `open`
 
-**Key**: resolve = checkout + APPLY fixes + RUN TESTS + COMMIT + PUSH + SAVE STATE + approve.
+**Key**: resolve = checkout + SKIP PROMPT + APPLY fixes + RUN TESTS + COMMIT + PUSH + SAVE STATE + approve.
 
 ## reviewiq-test Flow
 

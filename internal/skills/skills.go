@@ -123,6 +123,45 @@ var domainIndicators = map[string]domainDef{
 		files:    []string{"rabbitmq", "celery", "worker", "queue", "tasks.py", "celeryconfig", "sqs", "bullmq"},
 		skillFile: "messaging",
 	},
+	"sql": {
+		imports:  []string{"select ", "insert into", "update ", "delete from", " join ", "cursor.execute", "db.query", "conn.exec", "executemany"},
+		files:    []string{".sql"},
+		skillFile: "sql",
+	},
+	"migrations": {
+		imports:  []string{"alembic", "from alembic", "flyway", "liquibase", "knex.migrate", "prisma migrate", "ActiveRecord::Migration"},
+		files:    []string{"migrations/", "db/migrate/", "alembic/versions/", "flyway/", "liquibase/", "_migration.py", ".changeset.xml", "schema_migrations"},
+		skillFile: "migrations",
+	},
+	"orm": {
+		imports:  []string{"django.db", "sqlalchemy", "from sqlalchemy", "prisma", "@prisma/client", "typeorm", "sequelize", "mongoose", "gorm", "hibernate", "@entity", "javax.persistence", "jakarta.persistence", "spring-data"},
+		files:    []string{"models.py", "entity.ts", "entity.js", ".repository.ts", ".repository.java"},
+		skillFile: "orm",
+	},
+	"transactions": {
+		imports:  []string{"transaction.atomic", "@transactional", "begintx", "select for update", "for no key update", "pg_advisory_lock", "advisory_xact_lock", "savepoint ", "db.transaction(", "session.starttransaction"},
+		skillFile: "transactions",
+	},
+	"postgres": {
+		imports:  []string{"psycopg2", "asyncpg", "node-postgres", "from pg ", "pgx", "gorm.io/driver/postgres", "jsonb", "on conflict", "concurrently", "tsvector", "pg_trgm", "pg_stat_statements"},
+		files:    []string{"postgres", "postgresql"},
+		skillFile: "postgres",
+	},
+	"redis": {
+		imports:  []string{"redis", "ioredis", "go-redis", "lettuce", "jedis", "stackexchange.redis", "setnx", "xadd", "xreadgroup", "subscribe", "redis.lua", "redis.eval"},
+		files:    []string{"redis"},
+		skillFile: "redis",
+	},
+	"mongodb": {
+		imports:  []string{"pymongo", "mongoose", "mongodb", "mongoclient", "@document", "$match", "$lookup", "$group", "$unwind", "findoneandupdate", "aggregate(", "bulkwrite"},
+		files:    []string{"mongo"},
+		skillFile: "mongodb",
+	},
+	"elasticsearch": {
+		imports:  []string{"elasticsearch", "@elastic/elasticsearch", "opensearch", "org.elasticsearch.client", "_search", "_bulk", "_mapping", "indices.put_mapping", "search_after"},
+		files:    []string{"elastic", "opensearch"},
+		skillFile: "elasticsearch",
+	},
 }
 
 var alwaysLoad = []string{"commandments", "security", "scalability", "stability", "maintainability", "performance"}

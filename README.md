@@ -12,7 +12,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Compatible-purple.svg)](https://claude.ai/code)
 [![GitHub Stars](https://img.shields.io/github/stars/Sanmanchekar/reviewiq?style=social)](https://github.com/Sanmanchekar/reviewiq/stargazers)
 
-**4 commands. 19 review skills. Review PRs, post inline suggestions, track findings across iterations, fix code and auto-approve.**
+**4 commands. 27 review skills. Review PRs, post inline suggestions, track findings across iterations, fix code and auto-approve.**
 
 [Quick Start](#quick-start) |
 [Commands](#commands) |
@@ -47,7 +47,7 @@ ReviewIQ reviews PRs using domain expert skill modules — security, performance
 curl -sSL https://raw.githubusercontent.com/Sanmanchekar/reviewiq/main/install.sh | bash
 ```
 
-Auto-installs all dependencies (Go, git, gh CLI) if missing. Then builds binary, copies 19 skills, sets up Claude Code config.
+Auto-installs all dependencies (Go, git, gh CLI) if missing. Then builds binary, copies 27 skills, sets up Claude Code config.
 
 ### Update / Uninstall
 
@@ -302,6 +302,14 @@ Auto-detects languages, frameworks, and domains from changed files. Loads only r
 | **Airflow** | DAG, PythonOperator, BashOperator, XCom, schedule_interval, dags/ |
 | **Kafka** | confluent_kafka, KafkaProducer, KafkaConsumer, aiokafka, kafkajs |
 | **Messaging** | RabbitMQ, Celery, SQS, BullMQ, Redis queues, pika, amqp |
+| **SQL** | `.sql` files, raw `SELECT`/`INSERT`/`UPDATE`/`DELETE`, `cursor.execute`, `db.query` |
+| **Migrations** | `migrations/`, `alembic/versions/`, `db/migrate/`, `flyway`, `liquibase`, `V<n>__*.sql` |
+| **ORM** | django.db, sqlalchemy, prisma, typeorm, sequelize, mongoose, gorm, hibernate |
+| **Transactions** | `BEGIN`/`COMMIT`, `transaction.atomic`, `@Transactional`, `SELECT FOR UPDATE`, advisory locks |
+| **Postgres** | psycopg2, asyncpg, node-postgres, pgx, JSONB, ON CONFLICT, CONCURRENTLY |
+| **Redis** | redis, ioredis, redis-py, go-redis, lettuce, jedis, SETNX, XADD, EVAL |
+| **MongoDB** | pymongo, mongoose, MongoClient, `$match`/`$lookup`, findOneAndUpdate |
+| **Elasticsearch** | elasticsearch, @elastic/elasticsearch, opensearch, query DSL, `_bulk` |
 
 ### Token Budget
 
@@ -394,7 +402,7 @@ Comment on any PR to trigger actions:
 ```
 # Installed globally
 ~/.local/bin/reviewiq             CLI binary
-~/.reviewiq/skills/               19 skill modules
+~/.reviewiq/skills/               27 skill modules
 ~/.claude/REVIEWIQ.md             Claude Code global config
 ~/.claude/commands/reviewiq-*.md  4 slash commands (global, work in every repo)
 
