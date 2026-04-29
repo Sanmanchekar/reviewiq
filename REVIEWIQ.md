@@ -56,14 +56,30 @@ The state comment has markers:
 ```
 
 ### How to load state
+
+**Endpoint matters**: state lives in *issue comments* (PR-level comments), NOT *review comments* (inline). They are different APIs:
+
+| What | Endpoint | When |
+|---|---|---|
+| List all PR-level comments | `repos/{r}/issues/{N}/comments` | use this to find state comments |
+| Fetch single PR-level comment by id | `repos/{r}/issues/comments/{id}` | use this to re-fetch state |
+| Fetch single review comment (inline) | `repos/{r}/pulls/comments/{id}` | NOT for state — will 404 |
+
 ```bash
-# Find ALL state comments, pick the one with highest round number
-# Each round has its own comment: <!-- REVIEWIQ_STATE_ROUND_1 -->, <!-- REVIEWIQ_STATE_ROUND_2 -->, etc.
+# 1. List ALL state comments (PR-level) — pick the one with the highest round
 gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate \
-  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, body: .body}'
-# If multiple found: pick the one with highest ROUND_N marker
-# Decode: extract text between <!-- REVIEWIQ_STATE_START --> and <!-- REVIEWIQ_STATE_END -->, base64 -d
+  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, user: .user.login, body: .body}'
+
+# 2. Fetch a specific state comment by id (when re-loading mid-session)
+gh api repos/{owner}/{repo}/issues/comments/{comment_id} -q '.body'
+
+# 3. Decode the base64 payload between the START/END markers
 ```
+
+**Round number rule**: `next_round = max(round markers across ALL existing state comments) + 1`. NEVER assume sequential — phantom rounds exist when CI auto-recheck and human recheck both run on the same PR. Tolerate gaps.
+
+**Foreign state**: if the highest-round comment was authored by a user/bot that is NOT this session's actor (e.g., CI bot left a state comment we didn't write), treat its `resolved`/`wontfix` statuses as **untrusted**. For each such finding, re-verify against the current code before honoring the cached status. If the code still has the problem, flip the status back to `open` with a `status_history` entry noting the discrepancy.
+
 If no state comment found, start fresh (round 1, empty findings).
 
 ### How to save state (MANDATORY after every command)
@@ -172,24 +188,29 @@ For each file:
 
 ## reviewiq-recheck Flow
 
-1. Load state from GitHub PR hidden comment
-2. Increment round number
+1. Load state from GitHub PR hidden comment. List ALL state comments (not just one) and pick the highest-round marker. Record each comment's `user.login` so step 5 can detect foreign authorship.
+2. **Round number**: `next_round = max(round markers across ALL existing state comments) + 1`. NEVER assume the previous round was the one *we* wrote — CI auto-recheck may have inserted a phantom round between sessions.
 3. **Pull latest code**: `git fetch origin && git pull` — ensures local repo has all new commits for incremental diff
 4. Fetch current code, compare against `last_reviewed_sha` in state
-5. For each pending finding:
+5. **Re-verify foreign state** — if the loaded state was authored by a user/bot OTHER than the current actor (e.g., a CI bot like `github-actions[bot]`), do NOT trust its `resolved`/`wontfix` statuses. For each such finding:
+   - Read the file at the recorded line
+   - If the problematic pattern is still present → flip status back to `open` and add a `status_history` entry: `"Foreign state claimed resolved; code still shows the issue (re-verified)"`
+   - If genuinely fixed → keep `resolved` and add a `status_history` entry: `"Foreign state confirmed by re-verification"`
+6. For each pending finding:
    - Code fixed? → auto-resolve
    - Still broken? → keep pending
+   - Was previously `resolved` but problem returned (e.g. revert) → mark `open` with status_history note: `"Regressed: previous fix was reverted in <sha>"`
    - Changed differently? → needs-review
-6. Check new changes for new issues
-7. **Skip prompt** — list remaining `open` findings (after auto-resolution pass) in a numbered table, then ask:
+7. Check new changes for new issues
+8. **Skip prompt** — list remaining `open` findings (after auto-resolution pass) in a numbered table, then ask:
    ```
    Mark any as wontfix? Type `W <N>` or `W 1,3,5`, or Enter to keep all open:
    ```
    - For each ID marked: set `status: wontfix`, append a `status_history` entry with `note: "Skipped by user during recheck"`
-   - **No-op recheck guard**: if head SHA is unchanged AND no statuses changed via this prompt, skip posting a new round report. Still save state if anything was marked wontfix.
-8. Post NEW PR comment with this round's report (append to timeline, don't overwrite). Include any wontfix transitions.
-9. Post inline comments only for NEW findings
-10. Save updated state to GitHub PR hidden comment
+   - **No-op recheck guard**: if head SHA is unchanged AND no statuses changed via this prompt AND no foreign state was rewritten, skip posting a new round report. Still save state if anything was marked wontfix or re-verified.
+9. Post NEW PR comment with this round's report (append to timeline, don't overwrite). The report MUST surface **status flips** prominently — any finding whose status changed since the previous round gets a dedicated row showing `previous → current` (e.g. `resolved → open (regressed)`, `open → wontfix`, `resolved (foreign) → open (re-verified)`). Status flips are higher signal than vanilla `open` findings and should be visually distinct (⚠ marker or section).
+10. Post inline comments only for NEW findings
+11. Save updated state to GitHub PR hidden comment
 
 ## reviewiq-resolve Flow
 
@@ -244,6 +265,23 @@ Standalone test command — run tests for PR changes without resolving findings.
 
 **CRITICAL**: Do NOT use `/pulls/{N}/comments` — it rejects `line`/`subject_type`.
 Use the **Reviews API** (`/pulls/{N}/reviews`) which posts all inline comments in one batch.
+
+### Pre-flight: validate every inline `line` against diff hunks (MANDATORY)
+
+GitHub's reviews API rejects with `422 Line could not be resolved` if the line isn't inside a hunk that was actually changed. Validate **before** posting — every retry costs a full round-trip.
+
+```bash
+# Build {file -> [(hunk_start_new, hunk_end_new), ...]} from the unified diff
+gh pr diff {N} --repo {owner}/{repo} --patch > /tmp/reviewiq_diff.patch
+
+# For each finding (file, line):
+# 1. Parse hunks from /tmp/reviewiq_diff.patch — for each `@@ -a,b +c,d @@` in `+++ b/<file>`,
+#    the hunk covers NEW-file lines [c, c+d-1].
+# 2. If (file, line) falls inside ANY hunk → keep as inline.
+# 3. Else → demote to PR-level (post in the summary report body, not in `comments`).
+```
+
+After validation, the `comments` array passed to `/pulls/{N}/reviews` must contain ONLY findings whose `(path, line)` lies within a hunk. Demoted findings still appear in the markdown summary so the developer sees them — they just don't anchor inline.
 
 ### Post review with inline comments
 
