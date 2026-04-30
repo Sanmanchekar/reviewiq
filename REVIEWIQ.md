@@ -47,13 +47,20 @@ State lives ONLY in a hidden GitHub PR comment — no local files. This makes st
 The state comment has markers:
 ```
 <!-- REVIEWIQ_STATE_COMMENT -->
+<!-- REVIEWIQ_STATE_ROUND_N -->
 <details><summary>ReviewIQ State (Round N) — X open, Y resolved</summary>
-...summary table...
+...summary table (id / severity / status / file:line / title)...
+Last reviewed SHA: `abc123`
 </details>
 <!-- REVIEWIQ_STATE_START -->
-<base64-encoded JSON state>
+` ` `json
+{...full state JSON, plain — NOT base64...}
+` ` `
 <!-- REVIEWIQ_STATE_END -->
 ```
+(spaces in the fence shown above only to escape this README — actual comment uses a real triple-backtick fence)
+
+The summary table is the **fast path** for most reads — `id / severity / status / file:line / title` covers >80% of recheck/resolve decisions. The fenced JSON is the **slow path**, only needed when you need `status_history` (audit trail) or `suggested_fix` (resolve flow).
 
 ### How to load state
 
@@ -65,20 +72,43 @@ The state comment has markers:
 | Fetch single PR-level comment by id | `repos/{r}/issues/comments/{id}` | use this to re-fetch state |
 | Fetch single review comment (inline) | `repos/{r}/pulls/comments/{id}` | NOT for state — will 404 |
 
+**Two-phase load (token-efficient — never bring every prior round's body into context)**:
+
 ```bash
-# 1. List ALL state comments (PR-level) — pick the one with the highest round
+# Phase 1: lean listing — id + author + round number ONLY (no body).
+# Cost is O(1) regardless of round count. The full body of round N-1, N-2, …
+# never lands in the model's context.
 gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate \
-  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->")) | {id: .id, user: .user.login, body: .body}'
+  -q '.[] | select(.body | contains("<!-- REVIEWIQ_STATE_COMMENT -->"))
+        | {id: .id, user: .user.login,
+           round: ((.body | capture("ROUND_(?<r>[0-9]+)") | .r // "0") | tonumber)}'
+# Pick the row with the highest round. Tie-break by latest id.
 
-# 2. Fetch a specific state comment by id (when re-loading mid-session)
-gh api repos/{owner}/{repo}/issues/comments/{comment_id} -q '.body'
+# Phase 2: fetch ONLY the winning comment's body
+gh api repos/{owner}/{repo}/issues/comments/{winning_id} -q '.body' > /tmp/reviewiq_state.md
+```
 
-# 3. Decode the base64 payload between the START/END markers
+**Decide what to parse — summary table vs. full JSON**:
+
+| You need | Parse | Cost |
+|---|---|---|
+| `id / severity / status / file:line / title` | the markdown table inside `<details>` | tiny |
+| `last_reviewed_sha` | the line `` Last reviewed SHA: `…` `` in the `<details>` | tiny |
+| `status_history` (when did a finding flip?) | the fenced JSON between `START`/`END` markers | larger |
+| `suggested_fix` / `fix_rationale` | the fenced JSON | larger |
+
+Default to the summary table. Only extract the fenced JSON when a flow specifically needs `status_history` or `suggested_fix`. `reviewiq-recheck` typically does **not** need the JSON — the summary table + `git diff <last_reviewed_sha>..HEAD` is enough to drive re-verification. `reviewiq-resolve` DOES need the JSON (it reads `suggested_fix` per finding).
+
+```bash
+# Extract the fenced JSON only when a flow needs it (skip otherwise):
+awk '/<!-- REVIEWIQ_STATE_START -->/{flag=1; next}
+     /<!-- REVIEWIQ_STATE_END -->/{flag=0}
+     flag && !/^```/' /tmp/reviewiq_state.md > /tmp/reviewiq_state.json
 ```
 
 **Round number rule**: `next_round = max(round markers across ALL existing state comments) + 1`. NEVER assume sequential — phantom rounds exist when CI auto-recheck and human recheck both run on the same PR. Tolerate gaps.
 
-**Foreign state**: if the highest-round comment was authored by a user/bot that is NOT this session's actor (e.g., CI bot left a state comment we didn't write), treat its `resolved`/`wontfix` statuses as **untrusted**. For each such finding, re-verify against the current code before honoring the cached status. If the code still has the problem, flip the status back to `open` with a `status_history` entry noting the discrepancy.
+**Foreign state**: if the winning comment's `user.login` is NOT this session's actor (e.g., CI bot left a state comment we didn't write), treat its `resolved`/`wontfix` statuses as **untrusted**. For each such finding, re-verify against the current code before honoring the cached status. If the code still has the problem, flip the status back to `open` with a `status_history` entry noting the discrepancy.
 
 If no state comment found, start fresh (round 1, empty findings).
 
@@ -86,17 +116,42 @@ If no state comment found, start fresh (round 1, empty findings).
 
 **Always create a NEW comment — never PATCH/overwrite previous rounds.** Each round's state is preserved for audit trail.
 
+State is stored as **plain JSON inside a fenced code block** — no base64. The HTML markers still bracket it for find/replace, but the JSON is human-readable, diffable in GitHub's UI, and ~33% smaller in tokens than the equivalent base64. No encode step on save, no decode step on load.
+
 ```bash
-# Always POST new comment (never update old ones)
-gh api repos/{owner}/{repo}/issues/{pr}/comments \
-  -f body='<!-- REVIEWIQ_STATE_COMMENT -->
+# Assumes /tmp/reviewiq_state.json already contains the state JSON for this round.
+
+# 1. Build the comment body (markers + summary table + fenced JSON) via temp file.
+cat > /tmp/reviewiq_state_comment.md << 'ENDCOMMENT'
+<!-- REVIEWIQ_STATE_COMMENT -->
 <!-- REVIEWIQ_STATE_ROUND_N -->
 <details><summary>ReviewIQ State (Round N) — X open, Y resolved</summary>
-...summary table...
+
+| # | Severity | Status | File:Line | Title |
+|---|----------|--------|-----------|-------|
+| 1 | MEDIUM | open | src/foo.py:42 | Title here |
+
+Last reviewed SHA: `abc123`
+
 </details>
 <!-- REVIEWIQ_STATE_START -->
-{base64_encoded_state}
-<!-- REVIEWIQ_STATE_END -->'
+```json
+STATE_JSON_PLACEHOLDER
+```
+<!-- REVIEWIQ_STATE_END -->
+ENDCOMMENT
+
+# 2. Splice the JSON in (Python avoids shell-escaping issues with JSON content).
+python3 -c "
+import pathlib
+tpl = pathlib.Path('/tmp/reviewiq_state_comment.md').read_text()
+state = pathlib.Path('/tmp/reviewiq_state.json').read_text().rstrip()
+pathlib.Path('/tmp/reviewiq_state_comment.md').write_text(tpl.replace('STATE_JSON_PLACEHOLDER', state))
+"
+
+# 3. Wrap as a JSON request body and POST as a NEW comment (never PATCH).
+jq -Rs '{body: .}' < /tmp/reviewiq_state_comment.md > /tmp/reviewiq_state_payload.json
+gh api repos/{owner}/{repo}/issues/{pr}/comments --input /tmp/reviewiq_state_payload.json
 ```
 
 **CRITICAL**: You MUST save state after every reviewiq command. Always POST new, never PATCH — previous round states are preserved for history.
@@ -172,7 +227,7 @@ Load from `~/.reviewiq/skills/` or `.pr-review/skills/`:
 4. Review with cross-file analysis
 5. Post inline comments with ```suggestion blocks
 6. Post markdown report as PR comment (iteration report)
-7. **SAVE STATE** — create the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment with base64 state JSON (see "How to save state" above). This is NOT optional — without it, recheck/resolve will have no history.
+7. **SAVE STATE** — create the `<!-- REVIEWIQ_STATE_COMMENT -->` hidden comment with the fenced JSON state (see "How to save state" above). This is NOT optional — without it, recheck/resolve will have no history.
 
 ## reviewiq-pr --interactive Flow
 
@@ -191,17 +246,28 @@ For each file:
 1. Load state from GitHub PR hidden comment. List ALL state comments (not just one) and pick the highest-round marker. Record each comment's `user.login` so step 5 can detect foreign authorship.
 2. **Round number**: `next_round = max(round markers across ALL existing state comments) + 1`. NEVER assume the previous round was the one *we* wrote — CI auto-recheck may have inserted a phantom round between sessions.
 3. **Pull latest code**: `git fetch origin && git pull` — ensures local repo has all new commits for incremental diff
-4. Fetch current code, compare against `last_reviewed_sha` in state
-5. **Re-verify foreign state** — if the loaded state was authored by a user/bot OTHER than the current actor (e.g., a CI bot like `github-actions[bot]`), do NOT trust its `resolved`/`wontfix` statuses. For each such finding:
+4. **Compute the incremental diff** — this drives the entire read budget. Files outside `touched_files` get **zero re-reads** in this round.
+   ```bash
+   touched_files=$(git diff <last_reviewed_sha>..HEAD --name-only)
+   new_commits=$(git log --reverse --format=%H <last_reviewed_sha>..HEAD)
+   ```
+   If `touched_files` is empty **and** the loaded state was authored by us (not foreign): head is unchanged, our prior state stands. Skip steps 5–7 and go straight to step 8 (only the user's wontfix prompt may mutate state). For foreign state with empty `touched_files`, still run step 5 — we don't trust their cached statuses regardless.
+5. **Re-verify foreign state** — if the loaded state was authored by a user/bot OTHER than the current actor (e.g., a CI bot like `github-actions[bot]`), do NOT trust its `resolved`/`wontfix` statuses **or** its `last_reviewed_sha`. For foreign state, re-verify EVERY finding regardless of `touched_files` (paranoid mode — the foreign `last_reviewed_sha` may itself be wrong):
    - Read the file at the recorded line
    - If the problematic pattern is still present → flip status back to `open` and add a `status_history` entry: `"Foreign state claimed resolved; code still shows the issue (re-verified)"`
    - If genuinely fixed → keep `resolved` and add a `status_history` entry: `"Foreign state confirmed by re-verification"`
-6. For each pending finding:
-   - Code fixed? → auto-resolve
-   - Still broken? → keep pending
-   - Was previously `resolved` but problem returned (e.g. revert) → mark `open` with status_history note: `"Regressed: previous fix was reverted in <sha>"`
-   - Changed differently? → needs-review
-7. Check new changes for new issues
+6. **Per-finding re-verification (incremental)** — for each finding loaded from OUR OWN state, route by status × whether its `file` is in `touched_files`. The goal: read nothing for findings that mathematically cannot have changed.
+
+   | status | file in `touched_files`? | action |
+   |---|---|---|
+   | `wontfix` / `retracted` | either | carry forward, **no read** (reviewer already accepted; lifecycle-final) |
+   | `open` or `resolved` | no | carry forward unchanged, **no read** |
+   | `open` | yes | Read a narrow range around `finding.line`. Fixed → flip to `resolved` with note `"Auto-resolved at <head_sha>"`. Still broken → keep `open`. Code changed but problem moved → `needs-review` |
+   | `resolved` | yes | Read a narrow range around `finding.line`. Still fixed → keep `resolved`. Fix reverted → flip to `open` with note `"Regressed: previous fix was reverted in <sha>"` |
+
+   Use Read with `offset` / `limit` to grab ~20–40 lines around `finding.line` — never Read the whole file for re-verification.
+
+7. **Scan new commits for NEW issues** — iterate `git show <sha> -- <file>` for each commit in `new_commits` and each code file it touches (skip docs / CI configs). Review only the **additions** in each hunk; do NOT Read whole files — new issues by definition live in the changed lines. Assign new finding IDs starting from `max(existing_ids) + 1`.
 8. **Skip prompt** — list remaining `open` findings (after auto-resolution pass) in a numbered table, then ask:
    ```
    Mark any as wontfix? Type `W <N>` or `W 1,3,5`, or Enter to keep all open:

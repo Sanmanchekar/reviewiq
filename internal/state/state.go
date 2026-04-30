@@ -353,37 +353,53 @@ func LoadRemote(repo string, prNumber int) (*ReviewState, error) {
 // SaveRemote always creates a NEW comment (never overwrites previous rounds).
 // Each round's state is preserved as a separate hidden comment for audit trail.
 func SaveRemote(s *ReviewState) error {
-	encoded, err := encodeState(s)
+	stateJSON, err := encodeState(s)
 	if err != nil {
 		return err
 	}
 	sm := s.Summary
 	round := len(s.ReviewRounds)
-	body := fmt.Sprintf(`%s
-%s
-<details>
-<summary>ReviewIQ State (Round %d) — %d open, %d resolved</summary>
+	sha := sm.LastReviewedSHA
+	if sha == "" {
+		sha = "none"
+	}
 
-| Metric | Count |
-|--------|-------|
-| Total findings | %d |
-| Open | %d |
-| Resolved | %d |
-| Won't fix | %d |
-| Retracted | %d |
-| Assessment | %s |
-
-</details>
-
-%s
-%s
-%s`,
-		stateCommentHeader, stateRoundMarker(round), round, sm.Open, sm.Resolved,
-		sm.TotalFindings, sm.Open, sm.Resolved, sm.Wontfix, sm.Retracted, sm.Assessment,
-		stateMarkerStart, encoded, stateMarkerEnd)
+	var b strings.Builder
+	fmt.Fprintln(&b, stateCommentHeader)
+	fmt.Fprintln(&b, stateRoundMarker(round))
+	fmt.Fprintf(&b, "<details>\n<summary>ReviewIQ State (Round %d) — %d open, %d resolved</summary>\n\n", round, sm.Open, sm.Resolved)
+	b.WriteString(summaryTable(s.Findings))
+	fmt.Fprintf(&b, "\nLast reviewed SHA: `%s`\n\nAssessment: %s\n\n</details>\n\n", sha, sm.Assessment)
+	fmt.Fprintln(&b, stateMarkerStart)
+	b.WriteString("```json\n")
+	b.WriteString(stateJSON)
+	b.WriteString("\n```\n")
+	fmt.Fprintln(&b, stateMarkerEnd)
 
 	// Always POST new comment — preserves all previous round states
-	return ghAPI("POST", fmt.Sprintf("/repos/%s/issues/%d/comments", s.PR.Repo, s.PR.Number), map[string]string{"body": body})
+	return ghAPI("POST", fmt.Sprintf("/repos/%s/issues/%d/comments", s.PR.Repo, s.PR.Number), map[string]string{"body": b.String()})
+}
+
+// summaryTable renders findings as the fast-path markdown table inside <details>.
+// Columns: id / severity / status / file:line / title. Sorted by ID.
+func summaryTable(findings map[string]Finding) string {
+	if len(findings) == 0 {
+		return "_No findings yet._\n"
+	}
+	var ids []int
+	for _, f := range findings {
+		ids = append(ids, f.ID)
+	}
+	sort.Ints(ids)
+	var b strings.Builder
+	b.WriteString("| # | Severity | Status | File:Line | Title |\n")
+	b.WriteString("|---|----------|--------|-----------|-------|\n")
+	for _, id := range ids {
+		f := findings[fmt.Sprintf("%d", id)]
+		title := strings.ReplaceAll(f.Title, "|", `\|`)
+		fmt.Fprintf(&b, "| %d | %s | %s | %s:%d | %s |\n", f.ID, f.Severity, f.Status, f.File, f.Line, title)
+	}
+	return b.String()
 }
 
 // ── Load/Save (GitHub-only) ─────────────────────────────────────────────────
@@ -408,12 +424,52 @@ func Save(s *ReviewState) {
 
 func nowUTC() string { return time.Now().UTC().Format(time.RFC3339) }
 
+// encodeState produces pretty-printed JSON. Plain JSON inside a fenced code
+// block is the on-wire format — no base64. Pretty-print costs ~5% extra bytes
+// vs. compact, but makes the state human-readable and diffable in GitHub's UI.
 func encodeState(s *ReviewState) (string, error) {
-	data, err := json.Marshal(s)
+	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	return base64.StdEncoding.EncodeToString(data), nil
+	return string(data), nil
+}
+
+// decodePayload parses the content between the START/END markers. Tries
+// fenced JSON first (current format), falls back to base64+JSON for state
+// comments written by older binaries still on long-lived PRs.
+func decodePayload(payload string) (*ReviewState, error) {
+	payload = strings.TrimSpace(payload)
+	// New format: ```json … ``` fenced block
+	if strings.HasPrefix(payload, "```json") {
+		inner := strings.TrimPrefix(payload, "```json")
+		inner = strings.TrimSpace(inner)
+		inner = strings.TrimSuffix(inner, "```")
+		inner = strings.TrimSpace(inner)
+		var s ReviewState
+		if err := json.Unmarshal([]byte(inner), &s); err != nil {
+			return nil, err
+		}
+		return &s, nil
+	}
+	// Defensive: bare JSON without the fence
+	if strings.HasPrefix(payload, "{") {
+		var s ReviewState
+		if err := json.Unmarshal([]byte(payload), &s); err != nil {
+			return nil, err
+		}
+		return &s, nil
+	}
+	// Legacy format: base64-encoded JSON
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, err
+	}
+	var s ReviewState
+	if err := json.Unmarshal(decoded, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 func hasGitHubAuth() bool {
@@ -444,7 +500,8 @@ func findLatestStateComment(repo string, prNumber int) (int, *ReviewState, error
 	if err := json.Unmarshal(body, &comments); err != nil {
 		return 0, nil, nil
 	}
-	re := regexp.MustCompile(regexp.QuoteMeta(stateMarkerStart) + `\n(.+?)\n` + regexp.QuoteMeta(stateMarkerEnd))
+	// (?s) enables dotall — payloads now span multiple lines (fenced JSON block).
+	re := regexp.MustCompile(`(?s)` + regexp.QuoteMeta(stateMarkerStart) + `\s*(.+?)\s*` + regexp.QuoteMeta(stateMarkerEnd))
 
 	var bestID int
 	var bestState *ReviewState
@@ -458,19 +515,15 @@ func findLatestStateComment(repo string, prNumber int) (int, *ReviewState, error
 		if len(match) < 2 {
 			continue
 		}
-		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(match[1]))
+		s, err := decodePayload(match[1])
 		if err != nil {
-			continue
-		}
-		var s ReviewState
-		if err := json.Unmarshal(decoded, &s); err != nil {
 			continue
 		}
 		round := len(s.ReviewRounds)
 		if round > bestRound {
 			bestRound = round
 			bestID = c.ID
-			bestState = &s
+			bestState = s
 		}
 	}
 	if bestState != nil {
